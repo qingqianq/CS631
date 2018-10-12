@@ -8,20 +8,41 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <time.h>
+#include <pwd.h>
+#include <grp.h>
+
+#define BUFMODESIZE 10
+#define DEFAUTBLOCKSIZE 512
+#define ONE_KB 1024
 
 typedef struct mydir mydir;
 typedef struct myfile myfile;
 mydir * readFile(const char *pathname);
-void copyStat(myfile *fp, const struct stat *sp, const char *pathname);
-int lprint(mydir * dp);
-        
+int copyStat(myfile *fp, const struct stat *sp, const char *pathname);
+int freeAllDir(mydir *dp);
+int digitlen(int n);
+
+int sortDirs(mydir *dp,int (*cmp)(const void *,const void *));
+int cmpname (const void *s1, const void *s2);
+int cmpatime(const void *s1, const void *s2);
+int cmpmtime(const void *s1, const void *s2);
+int cmpctime(const void *s1, const void *s2);
+int cmpsize(const void *s1, const void *s2);
+int modeToStr(int mode, char *buf);
+int printtype(int mode);
+
+int lprint(mydir *dp);
+void printtime(int t);
+
+//struct 
 struct mydir{
     int fno;
-    int ino;
-    int lno;
-    int uno;
-    int gno;
-    int dno;
+    int iwid;
+    int lwid;
+    int uwid;
+    int gwid;
+    int dwid;
     myfile *fp;
 };
 /* dp is NULL to file and not NULL to point a mydir*/
@@ -30,135 +51,128 @@ struct myfile{
     int nameLen;
     int uid;
     int gid;
-    int dev;
+    int dev; 
     int mode;
     int links;
     int ino;
     int size;
-//    int a_time;
-//    int m_time;
-//    int c_time;
+    int blocks;
+    int a_time;
+    int m_time;
+    int c_time;
     char name[MAXNAMLEN + 1];
 };
 
 static int A_flg, a_flg, C_flg, c_flg, d_flg, F_flg, f_flg, h_flg,
         i_flg,k_flg,l_flg, n_flg, q_flg, R_flg, r_flg, S_flg, 
         s_flg, t_flg, u_flg, w_flg, x_flg;
+static int (*Cmpfunc)(const void *, const void *);
+static double blockSize;
         
 int main(int argc, char *argv[]){
     mydir *dp;
+    int c;
     if (argc < 1) 
         fprintf(stderr, "Usage : ls [-Option] [dir] \n");
-    if(argc == 1){
-        //basicprint();
-        exit(EXIT_SUCCESS);
-    }
-    if(argv[2][0] == '-'){ /*load option*/
-        char *p = argv[2];
-        p++;
-        for (int i = 0;i < strlen(p) ;i++) {
-            char ch = *(p + i);
-            switch (ch) {
-            case '1':
-                n_flg = 1;
-                break;
-            case 'A':
-                A_flg = 1;
-                break;
-            case 'a':
-                a_flg = 1;
-                break;
-            case 'C':
-                C_flg = 1;    
-                break;
-            case 'c':
-                c_flg = 1;
-                break;
-            case 'd':
-                d_flg = 1;
-                break;
-            case 'F':
-                F_flg = 1;
-                break;
-            case 'f':
-                f_flg = 1;
-                break;
-            case 'h':
-                h_flg = 1;
-                break;
-            case 'i':
-                i_flg = 1;
-                break;
-            case 'k':
-                k_flg = 1;
-                break;
-            case 'l':
-                l_flg = 1;
-                break;
-            case 'n':
-                n_flg = 1;
-                break;
-            case 'q':
-                q_flg = 1;
-                break;
-            case 'R':
-                R_flg = 1;
-                break;
-            case 'r':
-                r_flg = 1;
-                break;
-            case 'S':
-                S_flg = 1;
-                break;
-            case 's':
-                s_flg = 1;
-            case 't':
-                t_flg = 1;
-            case 'u':
-                u_flg = 1;
-            case 'w':
-                w_flg = 1;
-            case 'x':
-                x_flg = 1;
-            default:
-                printf("illegal option -%c \n",ch);
-            }
-        }
-        if (argc == 2) {
-            // use current dir
-            dp = readFile(".");
-            if(l_flg)
-                lprint(dp);
-            
-        }else if (argc == 3) { /*3 statements*/ 
-            if(argv[2][0] != '-')
-                printf("illegal option %s",argv[2]);
-            dp = readFile(argv[3]);
-            if(l_flg)
-                lprint(dp);
-        }else { 
-            /* four argc error*/
-            printf("more than 3 argv");
+    while ((c = getopt(argc, argv, "AaCcdFfHiklnqRrSstuwx"))!= -1){
+        switch (c) {
+        case 'A':
+            A_flg = 1;
+            break;
+        case 'a':
+            a_flg = 1;
+            break;
+        case 'C':
+            C_flg = 1;    
+            break;
+        case 'c':
+            c_flg = 1;
+            u_flg = 0;
+            break;
+        case 'd':
+            d_flg = 1;
+            R_flg = 0;
+            break;
+        case 'F':
+            F_flg = 1;
+            break;
+        case 'f':
+            f_flg = 1;
+            break;
+        case 'h':
+            h_flg = 1;
+            k_flg = 0;
+            break;
+        case 'i':
+            i_flg = 1;
+            break;
+        case 'k':
+            k_flg = 1;
+            h_flg = 0;
+            break;
+        case 'l':
+            l_flg = 1;
+            break;
+        case 'n':
+            n_flg = 1;
+            break;
+        case 'q':
+            q_flg = 1;
+            break;
+        case 'R':
+            R_flg = 1;
+            break;
+        case 'r':
+            r_flg = 1;
+            break;
+        case 'S':
+            S_flg = 1;
+            break;
+        case 's':
+            s_flg = 1;
+            break;
+        case 't':
+            t_flg = 1;
+            break;
+        case 'u':
+            u_flg = 1;
+            c_flg = 0;
+            Cmpfunc = cmpatime;
+            break;
+        case 'w':
+            w_flg = 1;
+            break;
+        case 'x':
+            x_flg = 1;
+            break;
+        default:
+            printf("illegal option \n");
             exit(EXIT_FAILURE);
         }
-    }else {
-        // there is no option
-        printf("no argv");
-//        basicprintf()
-    }
+    }               
+    if (argc >= 2) {
+        if((dp = readFile(argv[2])) != NULL){
+            lprint(dp);
+        }else {
+            printf("Error: cannot ls '%s' \n",argv[2]);
+        }
+    }      
 }
 /* Read a path and store it in mydir  */
 mydir * readFile(const char *pathname){
-    int no;
+    int width;
     DIR *dp;
     mydir *dir;
     myfile *temp;
-    struct stat *sp;
+//    struct stat *sp;
+    struct stat  st;
+//    sp = &st;
     struct dirent *direp;
     char home[MAXNAMLEN + 1];
+   
     if(getcwd(home, MAXNAMLEN + 1) == NULL)    //current dir
         return NULL;
-    if ((stat(pathname, sp)) == -1) 
+    if ((stat(pathname, &st)) == -1) 
         return  NULL;
     if((dir = calloc(1,sizeof(mydir))) == NULL)
         return NULL;
@@ -166,9 +180,9 @@ mydir * readFile(const char *pathname){
         free(dir);
         return NULL;
     }
-    if (!S_ISDIR(sp->st_mode)) {
+    if (!S_ISDIR(st.st_mode)) {
         dir->fno = 1;
-        copyStat(dir->fp, sp, pathname);
+        copyStat(dir->fp, &st, pathname);
         return dir;
     }
     if (chdir(pathname) == -1) {
@@ -182,44 +196,130 @@ mydir * readFile(const char *pathname){
         chdir(home);
         return NULL;
     }
+    
     for(dir->fno = 0; direp = readdir(dp); dir->fno++ ){ 
-        if (direp->d_name[0] == '.' && A_flg && a_flg) {
+        if (direp->d_name[0] == '.' && A_flg == 0 && a_flg == 0) {
             dir->fno--;
             continue;
         }
-        if ((strcmp(direp->d_name, ".")) || strcmp(direp->d_name, "..")) {
+        if ((strcmp(direp->d_name, ".") == 0 || strcmp(direp->d_name, "..") == 0) && a_flg == 0) {
             dir->fno--;
             continue;
         }
         if ((temp = realloc(dir->fp, (dir->fno + 1) * sizeof(myfile))) == NULL) {
-            free(dir);   
+            freeAllDir(dir);   
             chdir(home);
             closedir(dp);
             return  NULL;
         }
-        dir->fp = temp;
-        if (stat(direp->d_name, sp) == -1) {
-            free(dir);
+        dir->fp = temp; /* relloc may change the pointer if there is no enough space */
+        if (stat(direp->d_name, &st) == -1) {
+            freeAllDir(dir);
             chdir(home);
             closedir(dp);
             return  NULL;
         }
-        copyStat(dir->fp + dir->fno, sp, direp->d_name);
-        /* update argv in mydir */
-//        if (i_flg && (w = digitlen(dir->fp[dir->fno].ino)) {
-//            
+        copyStat(dir->fp + dir->fno, &st, direp->d_name);
+        /* update argv in mydir try to calculate width  */
+//        if (i_flg && (width = digitlen(dir->fp[dir->fno].ino)) > dir->iwid) {
+//            dir->iwid = width;
 //        }
-//        if(l_flg){
-//            
+//        if(l_flg || n_flg){
+//            if ((width = digitlen(dir->fp[dir->fno].links)) > dir->lwid) {
+//                dir->lwid = width;
+//            }
+//            if ((width = digitlen(dir->fp[dir->fno].uid)) > dir->lwid) {
+//                dir->lwid = width;
+//            }
+//            if ((width = digitlen(dir->fp[dir->fno].links)) > dir->lwid) {
+//                dir->lwid = width;
+//            }
 //        }
-        //Rflg 
+        if(R_flg){
+            if(strcmp(direp->d_name, ".") || strcmp(direp->d_name, ".."))
+                continue;
+            if(S_ISDIR(st.st_mode) && ((dir->fp[dir->fno].dp = readFile(direp->d_name)) == NULL)){
+                freeAllDir(dir);
+                chdir(home);
+                closedir(dp);
+                return NULL;
+            }
+        }
     }
     chdir(home);
     closedir(dp);
     return dir;
 }
 
-void copyStat(myfile *fp, const struct stat *sp, const char *pathname){
+int modeToStr(int mode, char *buf){
+    strcpy(buf,"----------");
+    if(S_ISDIR(mode))
+        buf[0] = 'd';
+    if(S_ISCHR(mode))
+        buf[0] = 'c';
+    if(S_ISBLK(mode))
+        buf[0] = 'b';
+    if(S_ISLNK(mode))
+        buf[0] = 'l';
+    if(S_ISFIFO(mode))
+        buf[0] = 'p';
+    if(S_ISSOCK(mode))
+        buf[0] = 's';
+    if(mode & S_IRUSR)
+        buf[1] = 'r';
+    if(mode & S_IWUSR)
+        buf[2] = 'w';
+    if(mode & S_IXUSR)
+        buf[3] = 'x';
+    if(mode & S_ISUID)
+        buf[3] = 's';
+    if(mode & S_IRGRP)
+        buf[4] = 'r';
+    if(mode & S_IWGRP)
+        buf[5] = 'w';
+    if(mode & S_IXGRP)
+        buf[6] = 'x';
+    if(mode & S_ISGID)
+        buf[6] = 's';
+    if(mode & S_IROTH)
+        buf[7] = 'r';
+    if(mode & S_IWOTH)
+        buf[8] = 'w';
+    if(mode & S_IXOTH)
+        buf[9] = 'x';
+    if(mode & S_ISVTX)
+        buf[9] = 't';
+}
+int sortDirs(mydir *dp,int (*cmp)(const void *,const void *)){
+    int i;
+    if (dp == NULL || dp->fp == NULL)
+        return -1;
+    for(i = 0; i< dp->fno; i++){
+        if (dp->fp[i].dp) {
+            sortDirs(dp->fp[i].dp, cmp);
+        }
+    qsort(dp->fp, dp->fno, sizeof(myfile), cmp);
+    return 0;
+    }
+}
+
+int cmpname (const void *s1, const void *s2){
+    return strcmp(((myfile*)s1)->name, ((myfile*)s2)->name);
+}
+int cmpatime(const void *s1, const void *s2){
+    return ((myfile*)s1)->a_time - ((myfile*)s2)->a_time;
+}
+int cmpctime(const void *s1, const void *s2){
+    return ((myfile*)s1)->c_time - ((myfile*)s2)->c_time;
+}
+int cmpmtime(const void *s1, const void *s2){
+    return ((myfile*)s1)->m_time - ((myfile*)s2)->m_time;
+}
+int cmpsize(const void *s1, const void *s2){
+    return ((myfile*)s1)->size - ((myfile*)s2)->size;
+}
+
+int copyStat(myfile *fp, const struct stat *sp, const char *pathname){
     fp->dp = NULL;
     fp->ino = sp->st_ino;
     fp->uid = sp->st_uid;
@@ -227,27 +327,113 @@ void copyStat(myfile *fp, const struct stat *sp, const char *pathname){
     fp->dev = sp->st_rdev;
     fp->mode = sp->st_mode;
     fp->size = sp->st_size;
-    /*mode does not match*/
-//    fp->a_time = sp->st_atime;
-//    fp->m_time = sp->st_mtime;
-//    fp->c_cime = sp->st_ctime;
+    fp->a_time = sp->st_atime;
+    fp->m_time = sp->st_mtime;
+    fp->c_time = sp->st_ctime;
     fp->links = sp->st_nlink;
     fp->nameLen = strlen(pathname);
+    fp->blocks = sp->st_blocks;
     strcpy(fp->name, pathname);
+    return 0;
 }
-int lprint(mydir * dp){
+
+/*recursive free the mydir struct*/
+int freeAllDir(mydir *dp){
+    if (dp == NULL || dp->fp == NULL) 
+        return -1;
+    for (int i = 0;i < dp->fno ;i++) {
+        if (dp->fp[i].dp) 
+            freeAllDir(dp->fp[i].dp);
+    }
+    free(dp->fp);
+    free(dp);
+    return 0;
+}
+/* return digit of n */
+int digitlen(int n){
+    char buf[BUFSIZ];
+    snprintf(buf, BUFSIZ,"%d",n);
+    return strlen(buf);
+}
+
+void printtime(int t){
+    char buf[BUFSIZ];
+    struct tm *tp;
+    if ((tp = gmtime((time_t*)&t)) == NULL) {
+        snprintf(buf, BUFSIZ, "worng time");
+    }else {
+        snprintf(buf, BUFSIZ, "%d.%d.%d %d:%d:%d",tp->tm_year + 1900, tp->tm_mon + 1, tp->tm_mday, tp->tm_hour,tp->tm_min, tp->tm_sec);
+    }
+    printf("%-18s ",buf);
+}
+
+int lprint(mydir *dp){
+    char buf[BUFMODESIZE + 1];
+    char temp[BUFSIZ];
+    struct passwd *pw;
+    struct group *gp;
     int i;
     if(dp == NULL || dp->fp == NULL)
         return -1;
-    if(dp->fno == 0)
+    if(dp->fno == 0){
+        putchar('\n');
         return 0;
-    for (i = 0;i < dp->fno;i++) {
-        if (d_flg) {
-            printf("d");
-        }
-        if(i_flg)
-            printf("i");
     }
-      /* print mode*/
+    for (i = 0; i < dp->fno; i++) {
+        if(i_flg)
+            printf("%-d ", dp->fp[i].ino);
+        if(s_flg){
+            if(getenv("BLOCKSIZE") != NULL){
+                blockSize = atof(getenv("BLOCKSIZE"));
+            }else {
+                blockSize = DEFAUTBLOCKSIZE;
+            }
+            printf("%-d  ",(int)((dp->fp[i].blocks) * (DEFAUTBLOCKSIZE/blockSize)));
+        }
+        modeToStr(dp->fp[i].mode, buf);
+        printf("%s",buf);
+        if(F_flg)
+            printType(dp->fp[i].mode);
+        else putchar(' ');
+        printf("%d ",dp->fp[i].links);        
+        pw = getpwuid(dp->fp[i].uid);
+        gp = getgrgid(dp->fp[i].gid);
+        if (l_flg) {
+            if(pw != NULL)
+            printf("%s ",pw->pw_name);
+            printf("%s ",gp->gr_name);
+        }
+        if(n_flg){
+            printf("%d %d",dp->fp[i].uid,dp->fp[i].gid);
+        }
+        if (h_flg) {
+            
+        }
+        putchar('\n');
+    }
+    return 0;
+}
+
+int printType(int mode){
+    switch(mode & S_IFMT){
+    case S_IFDIR:
+        putchar('/');
+        break;
+    case S_IFLNK:
+        putchar('@');
+        break;
+    case S_IFSOCK:
+        putchar('=');
+        break;
+    case S_IFIFO:
+        putchar('|');
+        break;
+    default:
+        if(mode & (S_IXUSR | S_IXGRP | S_IXOTH))
+            putchar('*');
+        else putchar(' ');
+        break;
+    }
+    putchar(' ');
     return 0;
 }
