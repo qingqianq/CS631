@@ -30,10 +30,12 @@ int cmpmtime(const void *s1, const void *s2);
 int cmpctime(const void *s1, const void *s2);
 int cmpsize(const void *s1, const void *s2);
 int modeToStr(int mode, char *buf);
-int printtype(int mode);
+int printType(int mode);
+int sizeChange(int size);
 
+int onePrint(mydir *dp);
 int lprint(mydir *dp);
-void printtime(int t);
+void printTime(int64_t t);
 
 //struct 
 struct mydir{
@@ -57,10 +59,11 @@ struct myfile{
     int ino;
     int size;
     int blocks;
-    int a_time;
-    int m_time;
-    int c_time;
+    int64_t a_time;
+    int64_t m_time;
+    int64_t c_time;
     char name[MAXNAMLEN + 1];
+//    char linkName[MAXNAMLEN + 1];
 };
 
 static int A_flg, a_flg, C_flg, c_flg, d_flg, F_flg, f_flg, h_flg,
@@ -74,7 +77,7 @@ int main(int argc, char *argv[]){
     int c;
     if (argc < 1) 
         fprintf(stderr, "Usage : ls [-Option] [dir] \n");
-    while ((c = getopt(argc, argv, "AaCcdFfHiklnqRrSstuwx"))!= -1){
+    while ((c = getopt(argc, argv, "AaCcdFfhiklnqRrSstuwx"))!= -1){
         switch (c) {
         case 'A':
             A_flg = 1;
@@ -155,6 +158,7 @@ int main(int argc, char *argv[]){
             lprint(dp);
         }else {
             printf("Error: cannot ls '%s' \n",argv[2]);
+            printf("if -R maybe too many files.");
         }
     }      
 }
@@ -164,9 +168,7 @@ mydir * readFile(const char *pathname){
     DIR *dp;
     mydir *dir;
     myfile *temp;
-//    struct stat *sp;
     struct stat  st;
-//    sp = &st;
     struct dirent *direp;
     char home[MAXNAMLEN + 1];
    
@@ -180,11 +182,19 @@ mydir * readFile(const char *pathname){
         free(dir);
         return NULL;
     }
+    /* update once when ld or nd */
+    if(d_flg && (l_flg || n_flg)){
+        copyStat(dir->fp, &st, pathname);
+        dir->fno = 1;
+        lprint(dir);
+        exit(EXIT_SUCCESS);
+    }
     if (!S_ISDIR(st.st_mode)) {
         dir->fno = 1;
         copyStat(dir->fp, &st, pathname);
         return dir;
     }
+   
     if (chdir(pathname) == -1) {
         free(dir->fp);
         free(dir);
@@ -220,23 +230,28 @@ mydir * readFile(const char *pathname){
             return  NULL;
         }
         copyStat(dir->fp + dir->fno, &st, direp->d_name);
-        /* update argv in mydir try to calculate width  */
-//        if (i_flg && (width = digitlen(dir->fp[dir->fno].ino)) > dir->iwid) {
-//            dir->iwid = width;
+//        temp = dir->fp + dir->fno;
+//        if(temp->dp == NULL && lstat(direp->d_name, &st) != -1){
+//            
+//            temp->linkName = st.st_n
 //        }
-//        if(l_flg || n_flg){
-//            if ((width = digitlen(dir->fp[dir->fno].links)) > dir->lwid) {
-//                dir->lwid = width;
-//            }
-//            if ((width = digitlen(dir->fp[dir->fno].uid)) > dir->lwid) {
-//                dir->lwid = width;
-//            }
-//            if ((width = digitlen(dir->fp[dir->fno].links)) > dir->lwid) {
-//                dir->lwid = width;
-//            }
-//        }
+        /* update argv in mydir try to calculate width  try to implement format */
+        if (i_flg && (width = digitlen(dir->fp[dir->fno].ino)) > dir->iwid) {
+            dir->iwid = width;
+        }
+        if(l_flg || n_flg){
+            if ((width = digitlen(dir->fp[dir->fno].links)) > dir->lwid) {
+                dir->lwid = width;
+            }
+            if ((width = digitlen(dir->fp[dir->fno].uid)) > dir->lwid) {
+                dir->lwid = width;
+            }
+            if ((width = digitlen(dir->fp[dir->fno].links)) > dir->lwid) {
+                dir->lwid = width;
+            }
+        }
         if(R_flg){
-            if(strcmp(direp->d_name, ".") || strcmp(direp->d_name, ".."))
+            if(strcmp(direp->d_name, ".") == 0 || strcmp(direp->d_name, "..") == 0)
                 continue;
             if(S_ISDIR(st.st_mode) && ((dir->fp[dir->fno].dp = readFile(direp->d_name)) == NULL)){
                 freeAllDir(dir);
@@ -356,7 +371,7 @@ int digitlen(int n){
     return strlen(buf);
 }
 
-void printtime(int t){
+void printTime(int64_t t){
     char buf[BUFSIZ];
     struct tm *tp;
     if ((tp = gmtime((time_t*)&t)) == NULL) {
@@ -373,6 +388,7 @@ int lprint(mydir *dp){
     struct passwd *pw;
     struct group *gp;
     int i;
+    
     if(dp == NULL || dp->fp == NULL)
         return -1;
     if(dp->fno == 0){
@@ -392,9 +408,7 @@ int lprint(mydir *dp){
         }
         modeToStr(dp->fp[i].mode, buf);
         printf("%s",buf);
-        if(F_flg)
-            printType(dp->fp[i].mode);
-        else putchar(' ');
+        putchar(' ');
         printf("%d ",dp->fp[i].links);        
         pw = getpwuid(dp->fp[i].uid);
         gp = getgrgid(dp->fp[i].gid);
@@ -404,12 +418,105 @@ int lprint(mydir *dp){
             printf("%s ",gp->gr_name);
         }
         if(n_flg){
-            printf("%d %d",dp->fp[i].uid,dp->fp[i].gid);
+            printf("%d %d ",dp->fp[i].uid,dp->fp[i].gid);
         }
         if (h_flg) {
-            
+            sizeChange(dp->fp[i].size);
+            putchar(' ');
+        }else {
+            printf("%-d ",dp->fp[i].size);
         }
+        if (c_flg) {
+            printTime(dp->fp[i].c_time);
+        }else if(u_flg) {
+            printTime(dp->fp[i].a_time);
+        }else
+            printTime(dp->fp[i].m_time);
+        if(d_flg){
+            printf(".\n");
+            return 0;
+        }
+        printf("%s",dp->fp[i].name);
+        if(F_flg){
+            printType(dp->fp[i].mode);
+        }
+//        if (S_ISLNK(dp->fp[i].mode)) {
+//            link-> 
+//        }
         putchar('\n');
+    }
+    if(R_flg){
+        for (i = 0;i < dp->fno; i++) {
+            if(strcmp(dp->fp[i].name, ".") == 0 || strcmp(dp->fp[i].name, "..") == 0)
+                continue;
+            if(S_ISDIR(dp->fp[i].mode)){
+                printf("%s:\n", dp->fp[i].name);
+                lprint(dp->fp[i].dp);
+            }
+        }
+    }
+    return 0;
+}
+int onePrint(mydir *dp){
+    int i;
+    if(dp == NULL || dp->fp == NULL)
+        return -1;
+    if(dp->fno == 0){
+        putchar('\n');
+        return 0;
+    }
+    for(i = 0; i < dp->fno; i++){
+        if(i_flg)
+        printf("%-d ", dp->fp[i].ino);
+        printf("%s\n", dp->fp[i].name);
+    }
+    if(R_flg == 0)
+        return 0;
+    for(i = 0; i < dp->fno; i++){ 
+        if(strcmp(dp->fp[i].name, ".") == 0 || strcmp(dp->fp[i].name, "..") == 0)
+            continue;
+        if(S_ISDIR(dp->fp[i].mode)){
+            printf("%s:\n", dp->fp[i].name);
+            onePrint(dp->fp[i].dp);
+        }
+    }
+        return 0;
+}
+
+int sizeChange(int size){
+    int n = 0;
+    int temp = size;
+    while (temp > ONE_KB) {
+        temp = temp / ONE_KB;
+        n++;
+    }
+    printf("%d",temp);
+    switch (n) {
+    case 0:
+        putchar('B');
+        break;
+    case 1:
+        putchar('K');
+        break;
+    case 2:
+        putchar('M');
+        break;
+    case 3:
+        putchar('G');
+        break;
+    case 4:
+        putchar('T');
+        break;
+    case 5:
+        putchar('P');
+        break;
+    case 6:
+        putchar('E');
+    case 7:
+        putchar('Z');
+    default:
+        printf("size Error");
+        return -1;
     }
     return 0;
 }
