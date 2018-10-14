@@ -178,11 +178,15 @@ int main(int argc, char *argv[]){
                 lprint(dp);
             else 
                 rowPrint(dp);
+            freeAllDir(dp);
+            exit(EXIT_SUCCESS);
         }else {
-            if((dp = readFile(".")) != NULL)
+            if((dp = readFile(".")) != NULL){
                 rowPrint(dp);
-            else 
+                freeAllDir(dp);
+            }else 
                 printf("Error: cannot ls '%s' \n",argv[2]);
+            exit(EXIT_FAILURE);
         }
     }  
     if(argc > 2){
@@ -193,12 +197,13 @@ int main(int argc, char *argv[]){
                 lprint(dp);
             }else 
                 rowPrint(dp);
+            freeAllDir(dp);
+            exit(EXIT_SUCCESS);
         }else {
             if (R_flg)
                 printf("-R maybe too many files.");
-            else
                 printf("Error: cannot ls '%s' \n",argv[2]);
-            
+            exit(EXIT_FAILURE);
         }
     }    
 }
@@ -502,7 +507,7 @@ int lprint(mydir *dp){
             if(strcmp(dp->fp[i].name, ".") == 0 || strcmp(dp->fp[i].name, "..") == 0)
                 continue;
             if(S_ISDIR(dp->fp[i].mode)){
-                printf("%s:\n", dp->fp[i].name);
+                printf("\n%s:\n", dp->fp[i].name);
                 lprint(dp->fp[i].dp);
             }
         }
