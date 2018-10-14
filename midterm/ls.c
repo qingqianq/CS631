@@ -11,6 +11,7 @@
 #include <time.h>
 #include <pwd.h>
 #include <grp.h>
+#include <ctype.h>
 
 #define BUFMODESIZE 10
 #define DEFAUTBLOCKSIZE 512
@@ -20,6 +21,7 @@ typedef struct mydir mydir;
 typedef struct myfile myfile;
 mydir * readFile(const char *pathname);
 int copyStat(myfile *fp, const struct stat *sp, const char *pathname);
+int copyLinkName(myfile *fp, const char *filename);
 int freeAllDir(mydir *dp);
 int digitlen(int n);
 
@@ -33,9 +35,10 @@ int modeToStr(int mode, char *buf);
 int printType(int mode);
 int sizeChange(int size);
 
-int onePrint(mydir *dp);
+int rowPrint(mydir *dp);
 int lprint(mydir *dp);
 void printTime(int64_t t);
+void q_copy(char *a, char *b);
 
 //struct 
 struct mydir{
@@ -63,20 +66,21 @@ struct myfile{
     int64_t m_time;
     int64_t c_time;
     char name[MAXNAMLEN + 1];
-//    char linkName[MAXNAMLEN + 1];
+    char linkName[MAXNAMLEN + 1];
 };
 
 static int A_flg, a_flg, C_flg, c_flg, d_flg, F_flg, f_flg, h_flg,
         i_flg,k_flg,l_flg, n_flg, q_flg, R_flg, r_flg, S_flg, 
         s_flg, t_flg, u_flg, w_flg, x_flg;
-static int (*Cmpfunc)(const void *, const void *);
+static int(*Cmpfunc)(const void *, const void *);
 static double blockSize;
         
 int main(int argc, char *argv[]){
-    mydir *dp;
+    register mydir *dp;
     int c;
     if (argc < 1) 
         fprintf(stderr, "Usage : ls [-Option] [dir] \n");
+    Cmpfunc = cmpname;
     while ((c = getopt(argc, argv, "AaCcdFfhiklnqRrSstuwx"))!= -1){
         switch (c) {
         case 'A':
@@ -91,6 +95,7 @@ int main(int argc, char *argv[]){
         case 'c':
             c_flg = 1;
             u_flg = 0;
+            Cmpfunc = cmpctime;
             break;
         case 'd':
             d_flg = 1;
@@ -126,16 +131,18 @@ int main(int argc, char *argv[]){
             R_flg = 1;
             break;
         case 'r':
-            r_flg = 1;
+            r_flg = -1;
             break;
         case 'S':
             S_flg = 1;
+            Cmpfunc = cmpsize;
             break;
         case 's':
             s_flg = 1;
             break;
         case 't':
             t_flg = 1;
+            Cmpfunc = cmpmtime;
             break;
         case 'u':
             u_flg = 1;
@@ -152,15 +159,48 @@ int main(int argc, char *argv[]){
             printf("illegal option \n");
             exit(EXIT_FAILURE);
         }
-    }               
-    if (argc >= 2) {
-        if((dp = readFile(argv[2])) != NULL){
-            lprint(dp);
+    }
+    r_flg = r_flg == 0 ? 1 : -1;
+    if(argc == 1){
+        if((dp = readFile(".")) != NULL){
+            if(Cmpfunc)
+                sortDirs(dp, Cmpfunc);
+            rowPrint(dp);
+            freeAllDir(dp);
+        }else 
+            printf("ls '.' error.");
+        exit(EXIT_FAILURE);
+    }
+    if (argc == 2) {
+        if(argv[1][0] == '-'){
+            dp = readFile(".");
+            if(l_flg || n_flg)
+                lprint(dp);
+            else 
+                rowPrint(dp);
         }else {
-            printf("Error: cannot ls '%s' \n",argv[2]);
-            printf("if -R maybe too many files.");
+            if((dp = readFile(".")) != NULL)
+                rowPrint(dp);
+            else 
+                printf("Error: cannot ls '%s' \n",argv[2]);
         }
-    }      
+    }  
+    if(argc > 2){
+        if((dp = readFile(argv[2])) != NULL){
+            if(Cmpfunc)
+                sortDirs(dp, Cmpfunc);
+            if(l_flg || n_flg){
+                lprint(dp);
+            }else 
+                rowPrint(dp);
+        }else {
+            if (R_flg)
+                printf("-R maybe too many files.");
+            else
+                printf("Error: cannot ls '%s' \n",argv[2]);
+            
+        }
+    }    
 }
 /* Read a path and store it in mydir  */
 mydir * readFile(const char *pathname){
@@ -183,10 +223,14 @@ mydir * readFile(const char *pathname){
         return NULL;
     }
     /* update once when ld or nd */
-    if(d_flg && (l_flg || n_flg)){
-        copyStat(dir->fp, &st, pathname);
-        dir->fno = 1;
-        lprint(dir);
+    if(d_flg ){
+        if(l_flg || n_flg){
+            copyStat(dir->fp, &st, pathname);
+            dir->fno = 1;
+            lprint(dir);
+        }else {
+            printf(".\n");
+        }        
         exit(EXIT_SUCCESS);
     }
     if (!S_ISDIR(st.st_mode)) {
@@ -207,7 +251,7 @@ mydir * readFile(const char *pathname){
         return NULL;
     }
     
-    for(dir->fno = 0; direp = readdir(dp); dir->fno++ ){ 
+    for(dir->fno = 0; (direp = readdir(dp)) != NULL; dir->fno++ ){ 
         if (direp->d_name[0] == '.' && A_flg == 0 && a_flg == 0) {
             dir->fno--;
             continue;
@@ -229,12 +273,11 @@ mydir * readFile(const char *pathname){
             closedir(dp);
             return  NULL;
         }
+        if(q_flg){
+            q_copy(direp->d_name, direp->d_name);
+        }
         copyStat(dir->fp + dir->fno, &st, direp->d_name);
-//        temp = dir->fp + dir->fno;
-//        if(temp->dp == NULL && lstat(direp->d_name, &st) != -1){
-//            
-//            temp->linkName = st.st_n
-//        }
+        copyLinkName(dir->fp + dir->fno,direp->d_name);
         /* update argv in mydir try to calculate width  try to implement format */
         if (i_flg && (width = digitlen(dir->fp[dir->fno].ino)) > dir->iwid) {
             dir->iwid = width;
@@ -304,36 +347,47 @@ int modeToStr(int mode, char *buf){
         buf[9] = 'x';
     if(mode & S_ISVTX)
         buf[9] = 't';
+    return 0;
 }
 int sortDirs(mydir *dp,int (*cmp)(const void *,const void *)){
     int i;
     if (dp == NULL || dp->fp == NULL)
         return -1;
     for(i = 0; i< dp->fno; i++){
-        if (dp->fp[i].dp) {
+        if ((dp->fp[i].dp) != NULL) {
             sortDirs(dp->fp[i].dp, cmp);
         }
+    }
     qsort(dp->fp, dp->fno, sizeof(myfile), cmp);
     return 0;
-    }
 }
 
 int cmpname (const void *s1, const void *s2){
-    return strcmp(((myfile*)s1)->name, ((myfile*)s2)->name);
+    return r_flg * strcmp(((myfile*)s2)->name, ((myfile*)s1)->name);
 }
 int cmpatime(const void *s1, const void *s2){
-    return ((myfile*)s1)->a_time - ((myfile*)s2)->a_time;
+    return r_flg * ((myfile*)s2)->a_time - ((myfile*)s1)->a_time;
 }
 int cmpctime(const void *s1, const void *s2){
-    return ((myfile*)s1)->c_time - ((myfile*)s2)->c_time;
+    return r_flg * (((myfile *)s1)->c_time - ((myfile *)s2)->c_time);
 }
 int cmpmtime(const void *s1, const void *s2){
-    return ((myfile*)s1)->m_time - ((myfile*)s2)->m_time;
+    return r_flg * ((myfile*)s2)->m_time - ((myfile*)s1)->m_time;
 }
 int cmpsize(const void *s1, const void *s2){
-    return ((myfile*)s1)->size - ((myfile*)s2)->size;
+    return r_flg * ((myfile*)s2)->size - ((myfile*)s1)->size;
 }
 
+int copyLinkName(myfile *fp, const char *filename){
+    char pathName[MAXNAMLEN + 1];
+    int linklen;
+    fp->linkName[0] = '\0';
+    if((linklen = readlink(filename, pathName, sizeof(pathName) - 1)) != -1){
+        pathName[linklen] = '\0';
+        strcpy(fp->linkName, &pathName[0]);
+    }
+    return 0;
+}
 int copyStat(myfile *fp, const struct stat *sp, const char *pathname){
     fp->dp = NULL;
     fp->ino = sp->st_ino;
@@ -374,7 +428,7 @@ int digitlen(int n){
 void printTime(int64_t t){
     char buf[BUFSIZ];
     struct tm *tp;
-    if ((tp = gmtime((time_t*)&t)) == NULL) {
+    if ((tp = localtime((time_t*)&t)) == NULL) {
         snprintf(buf, BUFSIZ, "worng time");
     }else {
         snprintf(buf, BUFSIZ, "%d.%d.%d %d:%d:%d",tp->tm_year + 1900, tp->tm_mon + 1, tp->tm_mday, tp->tm_hour,tp->tm_min, tp->tm_sec);
@@ -384,7 +438,6 @@ void printTime(int64_t t){
 
 int lprint(mydir *dp){
     char buf[BUFMODESIZE + 1];
-    char temp[BUFSIZ];
     struct passwd *pw;
     struct group *gp;
     int i;
@@ -440,9 +493,8 @@ int lprint(mydir *dp){
         if(F_flg){
             printType(dp->fp[i].mode);
         }
-//        if (S_ISLNK(dp->fp[i].mode)) {
-//            link-> 
-//        }
+        if(dp->fp[i].linkName[0] != '\0')
+            printf("->%s",dp->fp[i].linkName);
         putchar('\n');
     }
     if(R_flg){
@@ -457,7 +509,7 @@ int lprint(mydir *dp){
     }
     return 0;
 }
-int onePrint(mydir *dp){
+int rowPrint(mydir *dp){
     int i;
     if(dp == NULL || dp->fp == NULL)
         return -1;
@@ -467,8 +519,19 @@ int onePrint(mydir *dp){
     }
     for(i = 0; i < dp->fno; i++){
         if(i_flg)
-        printf("%-d ", dp->fp[i].ino);
-        printf("%s\n", dp->fp[i].name);
+            printf("%-d ", dp->fp[i].ino);
+        if(s_flg){
+            if(getenv("BLOCKSIZE") != NULL){
+                blockSize = atof(getenv("BLOCKSIZE"));
+            }else {
+                blockSize = DEFAUTBLOCKSIZE;
+            }
+            printf("%-d  ",(int)((dp->fp[i].blocks) * (DEFAUTBLOCKSIZE/blockSize)));
+        }
+        printf("%s", dp->fp[i].name);
+        if(F_flg)
+            printType(dp->fp[i].mode);
+        putchar('\n');
     }
     if(R_flg == 0)
         return 0;
@@ -477,7 +540,7 @@ int onePrint(mydir *dp){
             continue;
         if(S_ISDIR(dp->fp[i].mode)){
             printf("%s:\n", dp->fp[i].name);
-            onePrint(dp->fp[i].dp);
+            rowPrint(dp->fp[i].dp);
         }
     }
         return 0;
@@ -512,8 +575,10 @@ int sizeChange(int size){
         break;
     case 6:
         putchar('E');
+        break;
     case 7:
         putchar('Z');
+        break;
     default:
         printf("size Error");
         return -1;
@@ -527,7 +592,7 @@ int printType(int mode){
         putchar('/');
         break;
     case S_IFLNK:
-        putchar('@');
+        printf("@");
         break;
     case S_IFSOCK:
         putchar('=');
@@ -538,9 +603,18 @@ int printType(int mode){
     default:
         if(mode & (S_IXUSR | S_IXGRP | S_IXOTH))
             putchar('*');
-        else putchar(' ');
+            return 1;
         break;
     }
     putchar(' ');
     return 0;
+}
+void q_copy(char *a, char *b){
+    register char *p, *q;
+    for(p = a, q = b; *p; p++, q++){
+        if(isprint(*p))
+            *q = *p;
+        else
+            *q = '?';
+    }
 }
