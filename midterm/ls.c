@@ -16,7 +16,7 @@
 
 
 
-
+/* Read dir*/
 mydir * readFile(const char *pathname);
 int copyStat(myfile *fp, const struct stat *sp, const char *pathname);
 int copyLinkName(myfile *fp, const char *filename);
@@ -38,10 +38,11 @@ void q_copy(char *a, char *b);
 static int A_flg, a_flg, C_flg, c_flg, d_flg, F_flg, f_flg, h_flg,
         i_flg,k_flg,l_flg, n_flg, q_flg, R_flg, S_flg, 
         s_flg, t_flg, u_flg, w_flg, x_flg;
+int r_flg = 0;
 static int(*Cmpfunc)(const void *, const void *);
 static double blockSize;
 static double blktimes;
-int r_flg = 0;
+
         
 int main(int argc, char *argv[]){
     register mydir *dp;
@@ -133,7 +134,6 @@ int main(int argc, char *argv[]){
     if(k_flg && s_flg){
         if(getenv("BLOCKSIZE") != NULL){
             blockSize = atof(getenv("BLOCKSIZE"));
-            printf("bbbbbbb");
             if(blockSize < 0)
                 blktimes = (double)DEFAUTBLOCKSIZE / (double)ONE_KB ;
             else 
@@ -151,6 +151,7 @@ int main(int argc, char *argv[]){
                 sortDirs(dp, Cmpfunc);
             rowPrint(dp);
             freeAllDir(dp);
+            exit(EXIT_SUCCESS);
         }else 
             printf("ls '.' error.");
         exit(EXIT_FAILURE);
@@ -195,7 +196,17 @@ int main(int argc, char *argv[]){
         }
     }    
 }
-/* Read a path and store it in mydir  */
+/* Read a path and store it in mydir  
+  
+dir  
+ | - file1 (dp not NULL )
+ |     |--subfile1 (dp not NULL)
+ |           |-- subfile1 (dp not NULL)
+ |                  |-- sunsubfile (dp NULL)
+ |   file2 (dp NULL)
+ |   fileN...
+*/
+
 mydir * readFile(const char *pathname){
     int width;
     DIR *dp;
@@ -243,7 +254,7 @@ mydir * readFile(const char *pathname){
         chdir(home);
         return NULL;
     }
-    
+    /* create myfile to store info */
     for(dir->fno = 0; (direp = readdir(dp)) != NULL; dir->fno++ ){ 
         if (direp->d_name[0] == '.' && A_flg == 0 && a_flg == 0) {
             dir->fno--;
@@ -301,7 +312,7 @@ mydir * readFile(const char *pathname){
     closedir(dp);
     return dir;
 }
-
+/* from stat mode */
 int modeToStr(int mode, char *buf){
     strcpy(buf,"----------");
     if(S_ISDIR(mode))
@@ -344,8 +355,7 @@ int modeToStr(int mode, char *buf){
 }
 
 
-
-
+/* readlink(2) find linkName*/
 int copyLinkName(myfile *fp, const char *filename){
     char pathName[MAXNAMLEN + 1];
     int linklen;
@@ -356,6 +366,7 @@ int copyLinkName(myfile *fp, const char *filename){
     }
     return 0;
 }
+
 int copyStat(myfile *fp, const struct stat *sp, const char *pathname){
     fp->dp = NULL;
     fp->ino = sp->st_ino;
@@ -386,7 +397,7 @@ int freeAllDir(mydir *dp){
     free(dp);
     return 0;
 }
-/* return digit of n */
+/* return digit of n  (-C) not implement */
 int digitlen(int n){
     char buf[BUFSIZ];
     snprintf(buf, BUFSIZ,"%d",n);
@@ -404,12 +415,12 @@ void printTime(int64_t t){
     printf("%-18s ",buf);
 }
 
+
 int lprint(mydir *dp){
     char buf[BUFMODESIZE + 1];
     struct passwd *pw;
     struct group *gp;
     int i;
-    
     if(dp == NULL || dp->fp == NULL)
         return -1;
     if(dp->fno == 0){
@@ -473,6 +484,7 @@ int lprint(mydir *dp){
     }
     return 0;
 }
+/* default print */
 int rowPrint(mydir *dp){
     int i;
     if(dp == NULL || dp->fp == NULL)
@@ -509,7 +521,7 @@ int rowPrint(mydir *dp){
     }
         return 0;
 }
-
+/*change Byte to K M G */
 int sizeChange(int size){
     int n = 0;
     int temp = size;
@@ -573,6 +585,7 @@ int printType(int mode){
     putchar(' ');
     return 0;
 }
+/* printable use ? instead other */
 void q_copy(char *a, char *b){
     register char *p, *q;
     for(p = a, q = b; *p; p++, q++){
