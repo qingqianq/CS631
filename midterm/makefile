@@ -1,2 +1,11 @@
-all:
-	cc -Wall  ls.c -o ls
+CC       = gcc
+CFLAGS   = -Wall -Werror -Wextra
+OBJFILES = ls.c
+TARGET   = ls
+
+all: 
+	$(CC) $(CFLAGS) -o $(TARGET) $(OBJFILES)
+
+clean:
+	rm -f $(TARGET)
+

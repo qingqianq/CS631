@@ -12,25 +12,18 @@
 #include <pwd.h>
 #include <grp.h>
 #include <ctype.h>
+#include "cmp.h"
 
-#define BUFMODESIZE 10
-#define DEFAUTBLOCKSIZE 512
-#define ONE_KB 1024
 
-typedef struct mydir mydir;
-typedef struct myfile myfile;
+
+
 mydir * readFile(const char *pathname);
 int copyStat(myfile *fp, const struct stat *sp, const char *pathname);
 int copyLinkName(myfile *fp, const char *filename);
 int freeAllDir(mydir *dp);
 int digitlen(int n);
 
-int sortDirs(mydir *dp,int (*cmp)(const void *,const void *));
-int cmpname (const void *s1, const void *s2);
-int cmpatime(const void *s1, const void *s2);
-int cmpmtime(const void *s1, const void *s2);
-int cmpctime(const void *s1, const void *s2);
-int cmpsize(const void *s1, const void *s2);
+
 int modeToStr(int mode, char *buf);
 int printType(int mode);
 int sizeChange(int size);
@@ -40,41 +33,15 @@ int lprint(mydir *dp);
 void printTime(int64_t t);
 void q_copy(char *a, char *b);
 
-//struct 
-struct mydir{
-    int fno;
-    int iwid;
-    int lwid;
-    int uwid;
-    int gwid;
-    int dwid;
-    myfile *fp;
-};
-/* dp is NULL to file and not NULL to point a mydir*/
-struct myfile{
-    mydir *dp; /* Null to file, current dir to dir */
-    int nameLen;
-    int uid;
-    int gid;
-    int dev; 
-    int mode;
-    int links;
-    int ino;
-    int size;
-    int blocks;
-    int64_t a_time;
-    int64_t m_time;
-    int64_t c_time;
-    char name[MAXNAMLEN + 1];
-    char linkName[MAXNAMLEN + 1];
-};
+
 
 static int A_flg, a_flg, C_flg, c_flg, d_flg, F_flg, f_flg, h_flg,
-        i_flg,k_flg,l_flg, n_flg, q_flg, R_flg, r_flg, S_flg, 
+        i_flg,k_flg,l_flg, n_flg, q_flg, R_flg, S_flg, 
         s_flg, t_flg, u_flg, w_flg, x_flg;
 static int(*Cmpfunc)(const void *, const void *);
 static double blockSize;
 static double blktimes;
+int r_flg = 0;
         
 int main(int argc, char *argv[]){
     register mydir *dp;
@@ -200,13 +167,13 @@ int main(int argc, char *argv[]){
             freeAllDir(dp);
             exit(EXIT_SUCCESS);
         }else {
-            if((dp = readFile(".")) != NULL){
+            if((dp = readFile(argv[1])) != NULL){
                 if(Cmpfunc)
                     sortDirs(dp, Cmpfunc);
                 rowPrint(dp);
                 freeAllDir(dp);
             }else 
-                printf("Error: cannot ls '%s' \n",argv[2]);
+                printf("Error: cannot ls '%s' \n",argv[1]);
             exit(EXIT_FAILURE);
         }
     }  
@@ -375,34 +342,9 @@ int modeToStr(int mode, char *buf){
         buf[9] = 't';
     return 0;
 }
-int sortDirs(mydir *dp,int (*cmp)(const void *,const void *)){
-    int i;
-    if (dp == NULL || dp->fp == NULL)
-        return -1;
-    for(i = 0; i< dp->fno; i++){
-        if ((dp->fp[i].dp) != NULL) {
-            sortDirs(dp->fp[i].dp, cmp);
-        }
-    }
-    qsort(dp->fp, dp->fno, sizeof(myfile), cmp);
-    return 0;
-}
 
-int cmpname (const void *s1, const void *s2){
-    return r_flg * strcmp(((myfile*)s1)->name, ((myfile*)s2)->name);
-}
-int cmpatime(const void *s1, const void *s2){
-    return r_flg * ((myfile*)s2)->a_time - ((myfile*)s1)->a_time;
-}
-int cmpctime(const void *s1, const void *s2){
-    return r_flg * (((myfile *)s2)->c_time - ((myfile *)s1)->c_time);
-}
-int cmpmtime(const void *s1, const void *s2){
-    return r_flg * ((myfile*)s2)->m_time - ((myfile*)s1)->m_time;
-}
-int cmpsize(const void *s1, const void *s2){
-    return r_flg * ((myfile*)s2)->blocks - ((myfile*)s1)->blocks;
-}
+
+
 
 int copyLinkName(myfile *fp, const char *filename){
     char pathName[MAXNAMLEN + 1];
