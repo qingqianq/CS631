@@ -144,7 +144,6 @@ int main(int argc, char *argv[]){
         }
         setenv("BLOCKSIZE","1024",1);
     }
-    
     if(argc == 1){
         if((dp = readFile(".")) != NULL){
             if(Cmpfunc)
@@ -168,6 +167,7 @@ int main(int argc, char *argv[]){
             freeAllDir(dp);
             exit(EXIT_SUCCESS);
         }else {
+//            printf("argv1 %s \n",argv[1]);
             if((dp = readFile(argv[1])) != NULL){
                 if(Cmpfunc)
                     sortDirs(dp, Cmpfunc);
@@ -272,10 +272,8 @@ mydir * readFile(const char *pathname){
         }
         dir->fp = temp; /* relloc may change the pointer if there is no enough space */
         if (stat(direp->d_name, &st) == -1) {
-            freeAllDir(dir);
-            chdir(home);
-            closedir(dp);
-            return  NULL;
+            printf("illegal name");
+            continue;
         }
         if(q_flg){
             q_copy(direp->d_name, direp->d_name);
@@ -298,8 +296,13 @@ mydir * readFile(const char *pathname){
             }
         }
         if(R_flg){
-            if(strcmp(direp->d_name, ".") == 0 || strcmp(direp->d_name, "..") == 0)
+            if(strcmp(direp->d_name, ".") == 0 || strcmp(direp->d_name, "..") == 0 )
                 continue;
+            char *tmp = &(dir->fp + dir->fno)->linkName;
+            if (strcmp(tmp, ".") == 0) {
+                printf( "Error : loop dir\n");
+                return NULL;
+            }
             if(S_ISDIR(st.st_mode) && ((dir->fp[dir->fno].dp = readFile(direp->d_name)) == NULL)){
                 freeAllDir(dir);
                 chdir(home);
