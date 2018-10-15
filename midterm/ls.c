@@ -298,11 +298,15 @@ mydir * readFile(const char *pathname){
         if(R_flg){
             if(strcmp(direp->d_name, ".") == 0 || strcmp(direp->d_name, "..") == 0 )
                 continue;
-            char *tmp = &(dir->fp + dir->fno)->linkName;
-            if (strcmp(tmp, ".") == 0) {
-                printf( "Error : loop dir\n");
-                return NULL;
+            if ((dir->fp + dir->fno)->linkName[0] != '\n') {
+                if ((dir->fp + dir->fno)->linkName[0] == '.' && (dir->fp + dir->fno)->linkName[1] == '\0') {
+                    continue;
+                }
             }
+//            if((dir->fp + dir->fno)->linkName[0] == '.' && (dir->fp + dir->fno)->linkName[1] == '\0'){
+//                printf("loopdir");
+//                continue;
+//            }
             if(S_ISDIR(st.st_mode) && ((dir->fp[dir->fno].dp = readFile(direp->d_name)) == NULL)){
                 freeAllDir(dir);
                 chdir(home);
