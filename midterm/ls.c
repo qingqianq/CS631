@@ -74,6 +74,7 @@ static int A_flg, a_flg, C_flg, c_flg, d_flg, F_flg, f_flg, h_flg,
         s_flg, t_flg, u_flg, w_flg, x_flg;
 static int(*Cmpfunc)(const void *, const void *);
 static double blockSize;
+static double blktimes;
         
 int main(int argc, char *argv[]){
     register mydir *dp;
@@ -161,6 +162,22 @@ int main(int argc, char *argv[]){
         }
     }
     r_flg = r_flg == 0 ? 1 : -1;
+    blktimes = 1;
+    if(k_flg && s_flg){
+        if(getenv("BLOCKSIZE") != NULL){
+            blockSize = atof(getenv("BLOCKSIZE"));
+            printf("bbbbbbb");
+            if(blockSize < 0)
+                blktimes = (double)DEFAUTBLOCKSIZE / (double)ONE_KB ;
+            else 
+                blktimes = blockSize / ONE_KB;
+        }else {
+            blockSize = ONE_KB;
+            blktimes = (double)DEFAUTBLOCKSIZE / (double)ONE_KB;
+        }
+        setenv("BLOCKSIZE","1024",1);
+    }
+    
     if(argc == 1){
         if((dp = readFile(".")) != NULL){
             if(Cmpfunc)
@@ -174,6 +191,8 @@ int main(int argc, char *argv[]){
     if (argc == 2) {
         if(argv[1][0] == '-'){
             dp = readFile(".");
+            if(Cmpfunc)
+                sortDirs(dp, Cmpfunc);
             if(l_flg || n_flg)
                 lprint(dp);
             else 
@@ -182,6 +201,8 @@ int main(int argc, char *argv[]){
             exit(EXIT_SUCCESS);
         }else {
             if((dp = readFile(".")) != NULL){
+                if(Cmpfunc)
+                    sortDirs(dp, Cmpfunc);
                 rowPrint(dp);
                 freeAllDir(dp);
             }else 
@@ -368,19 +389,19 @@ int sortDirs(mydir *dp,int (*cmp)(const void *,const void *)){
 }
 
 int cmpname (const void *s1, const void *s2){
-    return r_flg * strcmp(((myfile*)s2)->name, ((myfile*)s1)->name);
+    return r_flg * strcmp(((myfile*)s1)->name, ((myfile*)s2)->name);
 }
 int cmpatime(const void *s1, const void *s2){
     return r_flg * ((myfile*)s2)->a_time - ((myfile*)s1)->a_time;
 }
 int cmpctime(const void *s1, const void *s2){
-    return r_flg * (((myfile *)s1)->c_time - ((myfile *)s2)->c_time);
+    return r_flg * (((myfile *)s2)->c_time - ((myfile *)s1)->c_time);
 }
 int cmpmtime(const void *s1, const void *s2){
     return r_flg * ((myfile*)s2)->m_time - ((myfile*)s1)->m_time;
 }
 int cmpsize(const void *s1, const void *s2){
-    return r_flg * ((myfile*)s2)->size - ((myfile*)s1)->size;
+    return r_flg * ((myfile*)s2)->blocks - ((myfile*)s1)->blocks;
 }
 
 int copyLinkName(myfile *fp, const char *filename){
@@ -457,12 +478,8 @@ int lprint(mydir *dp){
         if(i_flg)
             printf("%-d ", dp->fp[i].ino);
         if(s_flg){
-            if(getenv("BLOCKSIZE") != NULL){
-                blockSize = atof(getenv("BLOCKSIZE"));
-            }else {
-                blockSize = DEFAUTBLOCKSIZE;
-            }
-            printf("%-d  ",(int)((dp->fp[i].blocks) * (DEFAUTBLOCKSIZE/blockSize)));
+            printf("%-d ",(int)((dp->fp[i].blocks) * blktimes));
+            putchar(' ');
         }
         modeToStr(dp->fp[i].mode, buf);
         printf("%s",buf);
