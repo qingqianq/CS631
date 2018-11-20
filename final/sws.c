@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <arpa/inet.h>
-
+#include <ctype.h>
 /*
 nc 127.0.0.1 8080 nc ::1 8080
 POST /cgi-bin/post.cgi HTTP/1.0
@@ -17,6 +17,10 @@ BODY
 
 
 #define DEFAULTPORT 8080
+#define METHODSIZ 10
+#define URLSIZ 512
+#define PROSIZ 100
+
 int build_ipv4_socket(u_short *port, const char *ip);
 int build_ipv6_socket(u_short *port, const char *ip);
 int is_valid_ipv4(const char *ipv4);
@@ -84,7 +88,10 @@ int build_ipv6_socket(u_short *port, const char *ip){
 		perror("ipv6 socket error");
 		exit(EXIT_FAILURE);
 	}
-
+	int reuse = 1;
+	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) == -1) {
+		perror("setsockopet");
+	}
 	bzero(&server_address,sizeof(server_address));
 	server_address.sin6_family = AF_INET6;
 	server_address.sin6_port = htons(*port);
@@ -107,12 +114,36 @@ int build_ipv6_socket(u_short *port, const char *ip){
 
 void handle_request(int clientfd){
 	char buf[BUFSIZ];
-	int len = 0;
-	len = read_line(clientfd, buf, BUFSIZ);
-	printf("request: %s",buf);
-	len = read_line(clientfd, buf, BUFSIZ);
-		printf("request: %s",buf);
-	
+	char method[METHODSIZ];
+	char url[URLSIZ];
+	int i = 0, j = 0;
+	int n = read_line(clientfd, buf, BUFSIZ);
+	while(!isspace(buf[i]) && i < METHODSIZ - 1){
+		method[i] = buf[i];
+		i++;
+	}
+	method[i] = '\0';
+	printf("%s\n",method);
+//	i++;
+	while (isspace(buf[i])) {
+		i++;
+	}
+	while (!isspace(buf[i]) && j < URLSIZ - 1) {
+		url[j] = buf[i];
+		j++;
+		i++;
+	}
+	url[j] = '\0';
+	printf("%s\n",url);
+	while (isspace(buf[i])) {
+		i++;
+	}
+	j = 0;
+	while (!isspace(buf[i]) && j < PROSIZ - 1) {
+			url[j] = buf[i];
+			j++;
+			i++;
+		}
 }
 
 int read_line(int socket, char *buf, int size){
@@ -131,9 +162,8 @@ int read_line(int socket, char *buf, int size){
 			}
 			buf[i] = c;
 			++i;
-		}else {
+		}else 
 			c = '\n';
-		}
 	}
 	buf[i] = '\0';
 	return len;
