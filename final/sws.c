@@ -12,18 +12,21 @@
 #include <time.h>
 /*
 nc 127.0.0.1 8080 nc ::1 8080
-POST /cgi-bin/post.cgi HTTP/1.0
-BODY
+GET /.././ HTTP/1.0
+abc def abd
+If-Modified-Science: Mon, 22 Dec 2018 14:14:40 GMT
 */
 
 
 #define DEFAULTPORT 8080
 #define METHODSIZ 10
-//#define PROSIZ 100
+#define HEAD 10
+#define TIMESIZ 30
 #define SERVER_STRING "Server: http1.0\r\n"
 #define BAD_REQUEST "HTTP/1.0 400 Bad Request\r\n"
 #define CONNECT_SUCCESS "HTTP/1.0 200 OK\r\n"
 #define NOT_FOUND "HTTP/1.0 404 Not Found\r\n"
+#define CONTENT "Content-Type: text/html;\r\n"
 int build_ipv4_socket(u_short *port, const char *ip);
 int build_ipv6_socket(u_short *port, const char *ip);
 int is_valid_ipv4(const char *ipv4);
@@ -32,7 +35,10 @@ void handle_request();
 void handle_head(int clientfd, const char *url);
 int read_line(int socket, char *buf, int size);
 int is_cgi(char *url);
-//char sws[BUFSIZ] = "/sws";
+int send_date(int clientfd);
+int send_modify(int clientfd, FILE *fp);
+
+
 int c_flag = 0,d_flag = 0,h_flag = 0,i_flag = 0,l_flag = 0;
 u_short port = DEFAULTPORT;
 int logfd;
@@ -75,7 +81,7 @@ int main(int argc, char *argv[]) {
 
 	}
 	sws = argv[optind];
-	printf("%s\n",sws);
+	printf("sws_dir : %s\n",sws);
 	if (sws == NULL) {
 		perror("NO DIR\nsws[−dh] [−c dir] [−i address] [−l file] [−p port] dir\n\n");
 		exit(EXIT_FAILURE);
@@ -85,15 +91,12 @@ int main(int argc, char *argv[]) {
 	}
 	if (i_flag == 1) {
 		if (is_valid_ipv4(ip)) {
-			printf("ipv4");
 			listenedfd = build_ipv4_socket(&port, ip);
 		}
 		if (is_valid_ipv6(ip)) {
-			printf("ipv6");
 			listenedfd = build_ipv6_socket(&port, ip);
 		}
 	}else {
-		printf("else");
 		listenedfd = build_ipv6_socket(&port, ip);
 	}
 	int client_len = sizeof(client);
@@ -104,6 +107,7 @@ int main(int argc, char *argv[]) {
 		}
 		handle_request(clientfd);
 	}
+	close(listenedfd);
 }
 
 
@@ -178,6 +182,7 @@ void handle_request(int clientfd){
 	char *query_string = NULL;
 	int i = 0, j = 0, cgi = 0;
 	int n = read_line(clientfd, buf, BUFSIZ);
+	struct stat st;
 	while(!isspace(buf[i]) && i < METHODSIZ - 1){
 		method[i] = buf[i];
 		i++;
@@ -196,14 +201,30 @@ void handle_request(int clientfd){
 	url[j] = '\0';
 	printf("url :%s\n",url);
 	query_string = url;
+	
 	/* handle_url */
+	if ((stat(sws, &st)) == -1) {
+		perror("stat error\n");
+		exit(EXIT_FAILURE);
+	}
+	if (!S_ISDIR(st.st_mode)) {
+		perror("not a dir\n");
+		exit(EXIT_FAILURE);
+	}
+	if (chdir(sws) == -1) {
+		perror("change dir error");
+		exit(EXIT_FAILURE);
+	}
+	if(getcwd(path, BUFSIZ + 1) == NULL){
+		perror("get path error\n");
+		exit(EXIT_FAILURE);
+	}
 	if (query_string[0] == '~') {
-		path = getenv("HOME");
-		strcat(path,sws);
 		query_string++;
 		strcat(path,query_string);
-	}else 
-		path = url;	
+	}else {
+		strcat(path,url);
+	}
 	printf("path:%s\n",path);
 	
 	if (is_cgi(query_string)) 
@@ -237,9 +258,18 @@ void handle_request(int clientfd){
 		close(clientfd);
 		return;
 	}
+	/* return change*/
+	while ((n = strcmp(buf, "\n")) != 0 ) {
+		read_line(clientfd, buf, sizeof(buf));
+		printf("buf:%s",buf);
+	}
 	if ((n = strcmp(method, "HEAD")) == 0) {
 		handle_head(clientfd,path);
 	}
+	if((n = strcmp(method, "GET")) == 0){
+//		handle_get(clientfd, path);
+	}
+	close(clientfd);
 }
 
 int is_cgi(char *url){
@@ -262,17 +292,32 @@ int is_cgi(char *url){
 }
 
 void handle_head(int clientfd, const char *path){
-	time_t now;
-	struct tm *tm_now;
+	FILE *fp = NULL;	
+	// here may be safe problem maybe ~/../../   maybe root
+	if ((fp = fopen(path, "r")) == NULL)		
+		send(clientfd, NOT_FOUND, sizeof(NOT_FOUND), 0);
+	else {		
+		send(clientfd, CONNECT_SUCCESS, sizeof(CONNECT_SUCCESS), 0);
+		send_date(clientfd);
+		send(clientfd, SERVER_STRING, sizeof(SERVER_STRING), 0);
+		send_modify(clientfd,fp);
+		send(clientfd, CONTENT, sizeof(CONTENT), 0);
+		send(clientfd, "Content-Length: 0\n", sizeof("Content-Length: 0\n"), 0);
+	}	
+}
+int send_date(int clientfd){
+	time_t     now;
+	struct tm  ts;
+	char       buf[TIMESIZ];
 	time(&now);
-	tm_now = localtime(&now);
-	send(clientfd, SERVER_STRING, sizeof(SERVER_STRING), 0);
-	if (fopen(path, "r")) {
-		
-	}
-	send(clientfd, CONNECT_SUCCESS, sizeof(CONNECT_SUCCESS), 0);
-//	 printf("now datetime: %d-%d-%d %d:%d:%d\n",
-//	tm_now->tm_year+1900, tm_now->tm_mon+1, tm_now->tm_mday, tm_now->tm_hour, tm_now->tm_min, tm_now->tm_sec) ;
+	// Format time, "ddd yyyy-mm-dd hh:mm:ss zzz"
+	ts = *gmtime(&now);
+	strftime(buf, sizeof(buf), "%a %Y-%m-%d %H:%M:%S GMT\r\n", &ts);
+	send(clientfd, buf, sizeof(buf), 0);
+	return 0;
+}
+int send_modify(int clientfd, FILE *fp){
+	return 0;
 }
 int read_line(int socket, char *buf, int size){
 	int i = 0;
