@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <ctype.h>
+#include <time.h>
 /*
 nc 127.0.0.1 8080 nc ::1 8080
 POST /cgi-bin/post.cgi HTTP/1.0
@@ -18,28 +19,84 @@ BODY
 
 #define DEFAULTPORT 8080
 #define METHODSIZ 10
-#define URLSIZ 512
-#define PROSIZ 100
-
+//#define PROSIZ 100
+#define SERVER_STRING "Server: http1.0\r\n"
+#define BAD_REQUEST "HTTP/1.0 400 Bad Request\r\n"
+#define CONNECT_SUCCESS "HTTP/1.0 200 OK\r\n"
+#define NOT_FOUND "HTTP/1.0 404 Not Found\r\n"
 int build_ipv4_socket(u_short *port, const char *ip);
 int build_ipv6_socket(u_short *port, const char *ip);
 int is_valid_ipv4(const char *ipv4);
 int is_valid_ipv6(const char *ipv6);
 void handle_request();
+void handle_head(int clientfd, const char *url);
 int read_line(int socket, char *buf, int size);
+int is_cgi(char *url);
+//char sws[BUFSIZ] = "/sws";
+int c_flag = 0,d_flag = 0,h_flag = 0,i_flag = 0,l_flag = 0;
+u_short port = DEFAULTPORT;
+int logfd;
+char *cgi, *sws, *ip, *log_file = NULL;
 int main(int argc, char *argv[]) {
 	int listenedfd;
 	int clientfd;
-	u_short port = DEFAULTPORT;
-//	struct sockaddr_in client;
 	struct sockaddr_in6 client;
+	char opt;
+	while ((opt = getopt(argc, argv, "c:dhi:l:p:")) != -1) {
+		switch(opt){
+			case 'c':
+				c_flag = 1;
+				cgi = optarg;
+				break;
+			case 'd':
+				d_flag = 1;
+				break;
+			case 'h':
+				h_flag = 1;
+				break;
+			case 'i':
+				i_flag = 1;
+				ip = optarg;
+				break;
+			case 'l':
+				l_flag = 1;
+				log_file = optarg;
+				break;
+			case 'p':
+				port = atoi(optarg);
+				break;
+		}
+	}
+	if (h_flag == 1) {
+		printf("sws[−dh] [−c dir] [−i address] [−l file] [−p port] dir\n");
+		exit(EXIT_SUCCESS);
+	}
+	if (d_flag == 0) {
+
+	}
+	sws = argv[optind];
+	printf("%s\n",sws);
+	if (sws == NULL) {
+		perror("NO DIR\nsws[−dh] [−c dir] [−i address] [−l file] [−p port] dir\n\n");
+		exit(EXIT_FAILURE);
+	}
+	if (l_flag == 1) {
+		
+	}
+	if (i_flag == 1) {
+		if (is_valid_ipv4(ip)) {
+			printf("ipv4");
+			listenedfd = build_ipv4_socket(&port, ip);
+		}
+		if (is_valid_ipv6(ip)) {
+			printf("ipv6");
+			listenedfd = build_ipv6_socket(&port, ip);
+		}
+	}else {
+		printf("else");
+		listenedfd = build_ipv6_socket(&port, ip);
+	}
 	int client_len = sizeof(client);
-	/* listenedfd = build_ipv4_socket(&port,NULL); */
-//  listenedfd = build_ipv4_socket(&port, "127.0.0.1");
-//  listenedfd = build_ipv6_socket(&port, "::1");
-  listenedfd = build_ipv6_socket(&port,NULL);
-//	if (is_valid_ipv6("::1"))
-//		printf("yes");
 	while (1) {
 		if((clientfd = accept(listenedfd, (struct sockaddr *)&client, (socklen_t *)&client_len)) == -1){
 			perror("accept error");
@@ -114,38 +171,109 @@ int build_ipv6_socket(u_short *port, const char *ip){
 
 void handle_request(int clientfd){
 	char buf[BUFSIZ];
-	char method[METHODSIZ];
-	char url[URLSIZ];
-	int i = 0, j = 0;
+	char method[BUFSIZ];
+	char url[BUFSIZ];
+	char *path;
+	char http_version[BUFSIZ];
+	char *query_string = NULL;
+	int i = 0, j = 0, cgi = 0;
 	int n = read_line(clientfd, buf, BUFSIZ);
 	while(!isspace(buf[i]) && i < METHODSIZ - 1){
 		method[i] = buf[i];
 		i++;
 	}
 	method[i] = '\0';
-	printf("%s\n",method);
+	printf("method : %s\n",method);
 //	i++;
 	while (isspace(buf[i])) {
 		i++;
 	}
-	while (!isspace(buf[i]) && j < URLSIZ - 1) {
+	while (!isspace(buf[i]) && j < BUFSIZ - 1) {
 		url[j] = buf[i];
 		j++;
 		i++;
 	}
 	url[j] = '\0';
-	printf("%s\n",url);
+	printf("url :%s\n",url);
+	query_string = url;
+	/* handle_url */
+	if (query_string[0] == '~') {
+		path = getenv("HOME");
+		strcat(path,sws);
+		query_string++;
+		strcat(path,query_string);
+	}else 
+		path = url;	
+	printf("path:%s\n",path);
+	
+	if (is_cgi(query_string)) 
+		cgi = 1;
 	while (isspace(buf[i])) {
 		i++;
 	}
 	j = 0;
-	while (!isspace(buf[i]) && j < PROSIZ - 1) {
-			url[j] = buf[i];
-			j++;
-			i++;
-		}
+	while (!isspace(buf[i]) && j < BUFSIZ - 1) {
+		http_version[j] = buf[i];
+		j++;
+		i++;
+	}
+	http_version[j] = '\0';
+	printf("version:%s\n",http_version);
+	if (strcmp(method, "GET") && strcmp(method, "HEAD")) {
+		send(clientfd, BAD_REQUEST, sizeof(BAD_REQUEST), 0);
+		close(clientfd);
+		return;
+	}
+	if ((n = strcmp(http_version, "HTTP/1.1")) == 0){
+		close(clientfd);
+		return;
+	}
+	if ((n = strcmp(http_version, "HTTP/0.9")) == 0){
+		close(clientfd);
+		return;
+	}
+	if ((n = strcmp(http_version, "HTTP/1.0")) !=0) {
+		send(clientfd, BAD_REQUEST, sizeof(BAD_REQUEST), 0);
+		close(clientfd);
+		return;
+	}
+	if ((n = strcmp(method, "HEAD")) == 0) {
+		handle_head(clientfd,path);
+	}
 }
 
+int is_cgi(char *url){
+	int n;
+	char buf[11];
+	strncpy(buf,url,10);
+	if (url[0] == '/') {
+		buf[9] = '\0';
+		if ((n = strcmp(buf, "/cgi-bin/")) == 0)
+			return 1;
+		return 0;
+	}
+	if (url[0] == '~') {
+		buf[10] = '\0';
+		if ((n = strcmp(buf, "~/cgi-bin/")) == 0)
+			return 1;
+		return 0;
+	}
+	return 0;	
+}
+
+void handle_head(int clientfd, const char *path){
+	time_t now;
+	struct tm *tm_now;
+	time(&now);
+	tm_now = localtime(&now);
+	send(clientfd, SERVER_STRING, sizeof(SERVER_STRING), 0);
+	if (fopen(path, "r")) {
+		
+	}
+	send(clientfd, CONNECT_SUCCESS, sizeof(CONNECT_SUCCESS), 0);
+//	 printf("now datetime: %d-%d-%d %d:%d:%d\n",
+//	tm_now->tm_year+1900, tm_now->tm_mon+1, tm_now->tm_mday, tm_now->tm_hour, tm_now->tm_min, tm_now->tm_sec) ;
+}
 int read_line(int socket, char *buf, int size){
 	int i = 0;
 	int len;
@@ -154,7 +282,7 @@ int read_line(int socket, char *buf, int size){
 		len = recv(socket, &c, 1, 0);
 		if (len > 0) {
 			if(c == '\r'){
-				len = recv(socket, &c, 1, MSG_PEEK);
+				len = recv(socket, &c, 1, MSG_PEEK); // MSG_PEEK test next \n without change the next recv
 				if((len > 0) && (c == '\n'))
 					recv(socket, &c, 1, 0);
 				else 
@@ -183,5 +311,13 @@ int is_valid_ipv6(const char *ipv6){
 		return 0;
 	if(inet_pton(AF_INET6, ipv6, (void *)&addr6) == 1)
 		return 1;
+	return 0;
+}
+
+int is_modify(const char *modify){
+	return 0;
+}
+
+int logging(){
 	return 0;
 }
