@@ -10,33 +10,40 @@
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <time.h>
+#include <fcntl.h>
+#include <dirent.h>
 /*
 nc 127.0.0.1 8080 nc ::1 8080
-GET /.././ HTTP/1.0
+GET /../one/ HTTP/1.0
 abc def abd
-If-Modified-Science: Mon, 22 Dec 2018 14:14:40 GMT
+If-Modified-Since: Sun, 30 Sep 2018 17:58:49 GMT
 */
-
 
 #define DEFAULTPORT 8080
 #define METHODSIZ 10
 #define HEAD 10
-#define TIMESIZ 30
-#define SERVER_STRING "Server: http1.0\r\n"
+#define TIMESIZ BUFSIZ
+#define SERVER_STRING "Server: gws\r\n"
 #define BAD_REQUEST "HTTP/1.0 400 Bad Request\r\n"
 #define CONNECT_SUCCESS "HTTP/1.0 200 OK\r\n"
 #define NOT_FOUND "HTTP/1.0 404 Not Found\r\n"
-#define CONTENT "Content-Type: text/html;\r\n"
+//#define CONTENT "Content-Type: text/html\r\n"
+#define CONTENT "Content-Type: text/html\r\n"
+#define NOT_MODIFIED "HTTP/1.0 304 Not Modified"
+
+char html[10000] = "<!DOCTYPE HTML PUBLIC \"-//IETF//DTD HTML 2.0//EN\"><html><head>	<title>CS631 -- Advanced Programming in the UNIX Environment</title>	<style type=\"text/css\">	body {	background-color: #FFFFFf;	}	</style>	<style type=\"text/css\">	li.c1 {list-style: none}	</style></head><body>	<table border=\"1\" align=\"center\" cellpadding=\"15\">		<tbody><tr>			<td valign=\"top\">				<h2>CS631 -- Advanced Programming in the UNIX Environment - Final Project</h2>				</td></tr></tbody></table></body></html>";
+
 int build_ipv4_socket(u_short *port, const char *ip);
 int build_ipv6_socket(u_short *port, const char *ip);
 int is_valid_ipv4(const char *ipv4);
 int is_valid_ipv6(const char *ipv6);
-void handle_request();
+void handle_request(int clientfd);
 void handle_head(int clientfd, const char *url);
+void handle_get(int clientfd, const char *path, const char *modify);
 int read_line(int socket, char *buf, int size);
 int is_cgi(char *url);
 int send_date(int clientfd);
-int send_modify(int clientfd, FILE *fp);
+int send_modify(int clientfd, const char *path);
 
 
 int c_flag = 0,d_flag = 0,h_flag = 0,i_flag = 0,l_flag = 0;
@@ -177,18 +184,20 @@ void handle_request(int clientfd){
 	char buf[BUFSIZ];
 	char method[BUFSIZ];
 	char url[BUFSIZ];
-	char *path;
+	char *path = NULL;
+	char temp[BUFSIZ];
+	char modify[BUFSIZ];
 	char http_version[BUFSIZ];
 	char *query_string = NULL;
 	int i = 0, j = 0, cgi = 0;
 	int n = read_line(clientfd, buf, BUFSIZ);
 	struct stat st;
-	while(!isspace(buf[i]) && i < METHODSIZ - 1){
+	while(!isspace(buf[i]) && i < BUFSIZ - 1){
 		method[i] = buf[i];
 		i++;
 	}
 	method[i] = '\0';
-	printf("method : %s\n",method);
+	printf("method: %s\n",method);
 //	i++;
 	while (isspace(buf[i])) {
 		i++;
@@ -215,6 +224,7 @@ void handle_request(int clientfd){
 		perror("change dir error");
 		exit(EXIT_FAILURE);
 	}
+	path = (char *)malloc((size_t)BUFSIZ);
 	if(getcwd(path, BUFSIZ + 1) == NULL){
 		perror("get path error\n");
 		exit(EXIT_FAILURE);
@@ -229,9 +239,8 @@ void handle_request(int clientfd){
 	
 	if (is_cgi(query_string)) 
 		cgi = 1;
-	while (isspace(buf[i])) {
+	while (isspace(buf[i]))
 		i++;
-	}
 	j = 0;
 	while (!isspace(buf[i]) && j < BUFSIZ - 1) {
 		http_version[j] = buf[i];
@@ -240,34 +249,57 @@ void handle_request(int clientfd){
 	}
 	http_version[j] = '\0';
 	printf("version:%s\n",http_version);
-	if (strcmp(method, "GET") && strcmp(method, "HEAD")) {
-		send(clientfd, BAD_REQUEST, sizeof(BAD_REQUEST), 0);
+	if (strcmp(method, "GET") && strcmp(method, "HEAD")) {	
+		send(clientfd, BAD_REQUEST, strlen(BAD_REQUEST), 0);
+		send(clientfd,SERVER_STRING,strlen(SERVER_STRING),0);
+		send(clientfd,CONTENT,strlen(CONTENT),0);
+		send(clientfd, "Content-Length: 0\n", strlen("Content-Length: 0\n"), 0);
+		send_date(clientfd);
 		close(clientfd);
 		return;
 	}
-	if ((n = strcmp(http_version, "HTTP/1.1")) == 0){
-		close(clientfd);
-		return;
-	}
+//	if ((n = strcmp(http_version, "HTTP/1.1")) == 0){
+//		close(clientfd);
+//		return;
+//	}
 	if ((n = strcmp(http_version, "HTTP/0.9")) == 0){
 		close(clientfd);
 		return;
 	}
-	if ((n = strcmp(http_version, "HTTP/1.0")) !=0) {
-		send(clientfd, BAD_REQUEST, sizeof(BAD_REQUEST), 0);
+	if ((n = strcmp(http_version, "HTTP/1.1")) !=0) {
+//	if ((n = strcmp(http_version, "HTTP/1.0")) !=0) {
+		send(clientfd, BAD_REQUEST, strlen(BAD_REQUEST), 0);
+		send(clientfd,SERVER_STRING,strlen(SERVER_STRING),0);
+		send(clientfd,CONTENT,strlen(CONTENT),0);
+		send(clientfd, "Content-Length: 0\r\n", strlen("Content-Length: 0\r\n"), 0);
+		send_date(clientfd);
 		close(clientfd);
 		return;
 	}
-	/* return change*/
+	/* read if-modify-scince */
 	while ((n = strcmp(buf, "\n")) != 0 ) {
+		i = 0;
+		j = 0;
 		read_line(clientfd, buf, sizeof(buf));
-		printf("buf:%s",buf);
+		while (isspace(buf[i]))
+			i++;
+		while (!isspace(buf[i]) && j < BUFSIZ - 1) {
+			temp[j] = buf[i];
+			i++;
+			j++;
+		}
+		temp[j] = '\0';
+		printf("%s\n",temp);
+		if ((n = strcmp(temp, "If-Modified-Since:")) == 0)
+			strcpy(modify,buf);
 	}
-	if ((n = strcmp(method, "HEAD")) == 0) {
+	if ((n = strcmp(method, "HEAD")) == 0)
 		handle_head(clientfd,path);
-	}
 	if((n = strcmp(method, "GET")) == 0){
-//		handle_get(clientfd, path);
+//		if(cgi)
+//			handle_cgi()
+		handle_get(clientfd, path, modify);
+		bzero(modify, sizeof(modify));
 	}
 	close(clientfd);
 }
@@ -292,32 +324,109 @@ int is_cgi(char *url){
 }
 
 void handle_head(int clientfd, const char *path){
-	FILE *fp = NULL;	
+	int dp;	
 	// here may be safe problem maybe ~/../../   maybe root
-	if ((fp = fopen(path, "r")) == NULL)		
-		send(clientfd, NOT_FOUND, sizeof(NOT_FOUND), 0);
+	if ((dp = open(path, O_RDONLY)) < 0)		
+		send(clientfd, NOT_FOUND, strlen(NOT_FOUND), 0);
 	else {		
-		send(clientfd, CONNECT_SUCCESS, sizeof(CONNECT_SUCCESS), 0);
+		send(clientfd, CONNECT_SUCCESS, strlen(CONNECT_SUCCESS), 0);
 		send_date(clientfd);
-		send(clientfd, SERVER_STRING, sizeof(SERVER_STRING), 0);
-		send_modify(clientfd,fp);
-		send(clientfd, CONTENT, sizeof(CONTENT), 0);
-		send(clientfd, "Content-Length: 0\n", sizeof("Content-Length: 0\n"), 0);
+		send(clientfd, SERVER_STRING, strlen(SERVER_STRING), 0);
+		send_modify(clientfd, path);
+		send(clientfd, CONTENT, strlen(CONTENT), 0);
+		send(clientfd, "Content-Length: 0\r\n", sizeof("Content-Length: 0\r\n"), 0);
 	}	
 }
+void handle_get(int clientfd, const char *path, const char *modify){
+	int dp,n,len;	
+	char buf[TIMESIZ];
+	DIR *dir;
+	struct stat st;
+	struct dirent *dire;
+	struct tm ts;
+	struct dirent **namelist;
+	// here may be safe problem maybe ~/../../   maybe root
+	if ((dp = open(path, O_RDONLY)) < 0){
+		send(clientfd, NOT_FOUND, strlen(NOT_FOUND), 0);
+		send(clientfd, SERVER_STRING, strlen(SERVER_STRING), 0);
+		return;
+	}					
+	if ((stat(path, &st)) == -1) {
+		perror("stat error");
+		return;
+	}
+	ts = *gmtime((time_t*)&st.st_mtimespec);
+	strftime(buf, sizeof(buf), "If-Modified-Since: %a, %d %b %Y %H:%M:%S GMT\n", &ts);
+	if ((n = strcmp(buf, modify)) == 0) {
+		send(clientfd, NOT_MODIFIED, strlen(NOT_MODIFIED), 0);
+		send(clientfd, SERVER_STRING, strlen(SERVER_STRING), 0);
+		send_modify(clientfd, path);
+		send(clientfd, "Content-Length: 0\r\n", strlen("Content-Length: 0\r\n"), 0);
+		return;
+	}else {
+		send(clientfd, CONNECT_SUCCESS, strlen(CONNECT_SUCCESS), 0);
+		send(clientfd, SERVER_STRING, strlen(SERVER_STRING), 0);
+		send_modify(clientfd, path);
+		char contentStr[] = "Content-Type: text/html\r\n";
+		
+		send(clientfd, CONTENT, strlen(CONTENT), 0);
+		send(clientfd, "Content-Length: 1000\r\n", strlen("Content-Length: 1000\r\n"), 0);
+		send(clientfd, "\r\n", strlen("\r\n"), 0);
+//		send(clientfd, html, strlen(html), 0);
+//		send(clientfd, "\r\n", 1, 0);
+		sprintf(buf, "<HTML><HEAD><TITLE>Method Not Implemented\r\n");
+			send(clientfd, buf, strlen(buf), 0);
+			sprintf(buf, "</TITLE></HEAD>\r\n");
+			send(clientfd, buf, strlen(buf), 0);
+			sprintf(buf, "<BODY><P>HTTP request method not supported.\r\n");
+			send(clientfd, buf, strlen(buf), 0);
+			sprintf(buf, "</BODY></HTML>\r\n");
+			send(clientfd, buf, strlen(buf), 0);
+
+		
+	}
+	if (S_ISDIR(st.st_mode)) {
+		if ((n = scandir(path, &namelist, 0, alphasort)) < 0) {
+			perror("sancdir error");
+			return;
+		}
+		for (int i = 0;i < n; i++) {
+			if(namelist[i]->d_name[0] == '.')
+				continue;
+			len = 0;
+			send(clientfd, namelist[i]->d_name, strlen(namelist[i]->d_name), 0);
+			send(clientfd, "\n", 1, 0);
+			send(clientfd, html, strlen(html), 0);
+		}
+	}else {
+		
+	}
+}
 int send_date(int clientfd){
+	int len = 0;
 	time_t     now;
 	struct tm  ts;
 	char       buf[TIMESIZ];
 	time(&now);
-	// Format time, "ddd yyyy-mm-dd hh:mm:ss zzz"
 	ts = *gmtime(&now);
-	strftime(buf, sizeof(buf), "%a %Y-%m-%d %H:%M:%S GMT\r\n", &ts);
-	send(clientfd, buf, sizeof(buf), 0);
+	strftime(buf, sizeof(buf), "Date: %a, %d %b %Y %H:%M:%S GMT\n", &ts);
+	send(clientfd, buf, strlen(buf), 0);
 	return 0;
 }
-int send_modify(int clientfd, FILE *fp){
-	return 0;
+int send_modify(int clientfd, const char *path){
+	int len = 0;
+	char buf[TIMESIZ];
+	struct stat st;
+	struct tm ts;
+	if ((stat(path, &st)) == -1) {
+		perror("stat error");
+		close(clientfd);
+		return EXIT_FAILURE;
+	}
+	ts = *gmtime((time_t*)&st.st_mtimespec);
+	strftime(buf, sizeof(buf), "Last-Modified: %a, %d %b %Y %H:%M:%S GMT\r\n", &ts);
+	send(clientfd, buf, strlen(buf), 0);
+	return EXIT_SUCCESS;
 }
 int read_line(int socket, char *buf, int size){
 	int i = 0;
@@ -356,10 +465,6 @@ int is_valid_ipv6(const char *ipv6){
 		return 0;
 	if(inet_pton(AF_INET6, ipv6, (void *)&addr6) == 1)
 		return 1;
-	return 0;
-}
-
-int is_modify(const char *modify){
 	return 0;
 }
 
