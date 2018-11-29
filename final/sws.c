@@ -12,11 +12,15 @@
 #include <time.h>
 #include <fcntl.h>
 #include <dirent.h>
+#include <magic.h>
 /*
 nc 127.0.0.1 8080 nc ::1 8080
 GET /../one/ HTTP/1.0
 abc def abd
 If-Modified-Since: Sun, 30 Sep 2018 17:58:49 GMT
+
+
+guangqiqing$ gcc  -Wall -g test.c -lmagic  -o mytest
 */
 
 #define DEFAULTPORT 8080
@@ -44,6 +48,7 @@ int read_line(int socket, char *buf, int size);
 int is_cgi(const char *url);
 int send_date(int clientfd);
 int send_modify(int clientfd, const char *path);
+void send_content(int clientfd, const char *path);
 
 
 int c_flag = 0,d_flag = 0,h_flag = 0,i_flag = 0,l_flag = 0;
@@ -179,9 +184,7 @@ int build_ipv6_socket(u_short *port, const char *ip){
 	return sockfd;
 }
 
-
 void handle_request(int clientfd){
-	char *home = NULL;
 	char buf[BUFSIZ];
 	char method[BUFSIZ];
 	char url[BUFSIZ];
@@ -251,8 +254,8 @@ void handle_request(int clientfd){
 	if (strcmp(method, "GET") && strcmp(method, "HEAD")) {	
 		send(clientfd, UNIMPLEMENT, strlen(UNIMPLEMENT), 0);
 		send(clientfd,SERVER_STRING,strlen(SERVER_STRING),0);
-		send(clientfd,CONTENT,strlen(CONTENT),0);
-		send(clientfd, "Content-Length: 0\n", strlen("Content-Length: 0\n"), 0);
+//		send(clientfd,CONTENT,strlen(CONTENT),0);
+//		send(clientfd, "Content-Length: 0\n", strlen("Content-Length: 0\n"), 0);
 		send_date(clientfd);
 		close(clientfd);
 		return;
@@ -265,8 +268,8 @@ void handle_request(int clientfd){
 		close(clientfd);
 		return;
 	}
-	if ((n = strcmp(http_version, "HTTP/1.1")) !=0) { /*test for browser only send 1.1*/
-//	if ((n = strcmp(http_version, "HTTP/1.0")) !=0) {
+//	if ((n = strcmp(http_version, "HTTP/1.1")) !=0) { /*test for browser send http 1.1*/
+	if ((n = strcmp(http_version, "HTTP/1.0")) !=0) {
 		send(clientfd, BAD_REQUEST, strlen(BAD_REQUEST), 0);
 		send(clientfd,SERVER_STRING,strlen(SERVER_STRING),0);
 		send(clientfd,CONTENT,strlen(CONTENT),0);
@@ -339,14 +342,12 @@ void handle_head(int clientfd, const char *path){
 	}	
 }
 void handle_get(int clientfd, const char *path, const char *modify){
-	int dp,n,len;	
+	int dp,n;	
 	char buf[TIMESIZ];
 	char conntent_buf[CONTENTBUF];
 	char *home = NULL;
 	char abs_path[BUFSIZ];
-	FILE fp;
 	struct stat st;
-	struct dirent *dire;
 	struct tm ts;
 	struct dirent **namelist;
 	/* abs_path should be same with home */ 	
@@ -375,16 +376,17 @@ void handle_get(int clientfd, const char *path, const char *modify){
 	strftime(buf, sizeof(buf), "If-Modified-Since: %a, %d %b %Y %H:%M:%S GMT\n", &ts);
 	if ((n = strcmp(buf, modify)) == 0) {
 		send(clientfd, NOT_MODIFIED, strlen(NOT_MODIFIED), 0);
+		send_date(clientfd);
 		send(clientfd, SERVER_STRING, strlen(SERVER_STRING), 0);
 		send_modify(clientfd, path);
 		send(clientfd, "Content-Length: 0\r\n", strlen("Content-Length: 0\r\n"), 0);
 		return;
 	}else {
 		send(clientfd, CONNECT_SUCCESS, strlen(CONNECT_SUCCESS), 0);
+		send_date(clientfd);
 		send(clientfd, SERVER_STRING, strlen(SERVER_STRING), 0);
 		send_modify(clientfd, path);
-		char contentStr[] = "Content-Type: text/html\r\n";	
-		send(clientfd, CONTENT, strlen(CONTENT), 0);	
+		send_content(clientfd, path);
 	}
 	if (S_ISDIR(st.st_mode)) {
 		if ((n = scandir(path, &namelist, 0, alphasort)) < 0) {
@@ -412,7 +414,7 @@ void handle_get(int clientfd, const char *path, const char *modify){
 		send(clientfd, conntent_buf, strlen(conntent_buf), 0);
 //		sprintf(buf, "</BODY></HTML>\r\n");
 //		send(clientfd, buf, strlen(buf), 0);
-	}else {
+	}else { /* file */
 		sprintf(buf,"Content-Length: %d\r\n",(int)st.st_size);
 		send(clientfd, buf, strlen(buf), 0);
 		send(clientfd,"\r\n",strlen("\r\n"),0);
@@ -422,7 +424,6 @@ void handle_get(int clientfd, const char *path, const char *modify){
 	}
 }
 int send_date(int clientfd){
-	int len = 0;
 	time_t     now;
 	struct tm  ts;
 	char       buf[TIMESIZ];
@@ -433,7 +434,6 @@ int send_date(int clientfd){
 	return 0;
 }
 int send_modify(int clientfd, const char *path){
-	int len = 0;
 	char buf[TIMESIZ];
 	struct stat st;
 	struct tm ts;
@@ -489,4 +489,18 @@ int is_valid_ipv6(const char *ipv6){
 
 int logging(){
 	return 0;
+}
+/* magic 5 and use libmagic 
+	compile with -lmagic
+*/
+void send_content(int clientfd, const char *path){
+	char buf[BUFSIZ];
+	const char *mime;
+	magic_t magic;
+	magic = magic_open(MAGIC_MIME_TYPE);
+	magic_load(magic, NULL);
+	mime = magic_file(magic,path);
+	sprintf(buf, "Content-Type: %s\r\n",mime);
+	send(clientfd, buf, strlen(buf) , 0);
+	magic_close(magic);
 }
