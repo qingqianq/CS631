@@ -22,7 +22,7 @@ If-Modified-Since: Sun, 30 Sep 2018 17:58:49 GMT
 
 guangqiqing$ gcc  -Wall -g test.c -lmagic  -o mytest
 */
-
+#define LISTENSIZE 5
 #define DEFAULTPORT 8080
 #define METHODSIZ 10
 #define HEAD 10
@@ -55,8 +55,8 @@ void send_cgi_error(int clientfd);
 
 int c_flag = 0,d_flag = 0,h_flag = 0,i_flag = 0,l_flag = 0;
 u_short port = DEFAULTPORT;
-int logfd;
-char *cgi, *sws, *ip, *log_file = NULL;
+int log_fd = 0;
+const char *cgi_path, *sws, *ip, *log_file = NULL;
 int main(int argc, char *argv[]) {
 	int listenedfd;
 	int clientfd;
@@ -66,7 +66,7 @@ int main(int argc, char *argv[]) {
 		switch(opt){
 			case 'c':
 				c_flag = 1;
-				cgi = optarg;
+				cgi_path = optarg;
 				break;
 			case 'd':
 				d_flag = 1;
@@ -100,8 +100,8 @@ int main(int argc, char *argv[]) {
 		perror("NO DIR\nsws[−dh] [−c dir] [−i address] [−l file] [−p port] dir\n\n");
 		exit(EXIT_FAILURE);
 	}
-	if (l_flag == 1) {
-		
+	if (l_flag == 1 && log_file != NULL) {
+//		log_fd = open(*log_file,O_CREAT);
 	}
 	if (i_flag == 1) {
 		if (is_valid_ipv4(ip)) {
@@ -110,9 +110,8 @@ int main(int argc, char *argv[]) {
 		if (is_valid_ipv6(ip)) {
 			listenedfd = build_ipv6_socket(&port, ip);
 		}
-	}else {
+	}else 
 		listenedfd = build_ipv6_socket(&port, ip);
-	}
 	int client_len = sizeof(client);
 	while (1) {
 		if((clientfd = accept(listenedfd, (struct sockaddr *)&client, (socklen_t *)&client_len)) == -1){
@@ -147,7 +146,7 @@ int build_ipv4_socket(u_short *port, const char *ip){  //-p  -i
 		perror("ipv4 binding error");
 		exit(EXIT_FAILURE);
 	}
-	if(listen(sockfd,5) == -1){
+	if(listen(sockfd,LISTENSIZE) == -1){
 		perror("ipv4 listen error");
 		exit(EXIT_FAILURE);
 	}
@@ -175,7 +174,7 @@ int build_ipv6_socket(u_short *port, const char *ip){
 		perror("ipv6 binding error");
 		exit(EXIT_FAILURE);
 	}
-	if(listen(sockfd, 5) == -1){
+	if(listen(sockfd, LISTENSIZE) == -1){
 		perror("ipv4 listen error");
 		exit(EXIT_FAILURE);
 	}
@@ -231,7 +230,8 @@ void handle_request(int clientfd){
 		perror("get path error\n");
 		exit(EXIT_FAILURE);
 	}
-	if (query_string[0] == '~') {
+	/* wrong understanding here */
+	if (query_string[1] == '~') {
 		query_string++;
 		strcat(path,query_string);
 	}else
@@ -260,16 +260,16 @@ void handle_request(int clientfd){
 		close(clientfd);
 		return;
 	}
-	if ((n = strcmp(http_version, "HTTP/1.1")) == 0){
-		close(clientfd);
-		return;
-	}
+//	if ((n = strcmp(http_version, "HTTP/1.1")) == 0){
+//		close(clientfd);
+//		return;
+//	}
 	if ((n = strcmp(http_version, "HTTP/0.9")) == 0){
 		close(clientfd);
 		return;
 	}
-//	if ((n = strcmp(http_version, "HTTP/1.1")) !=0) { /*test for browser send http 1.1*/
-	if ((n = strcmp(http_version, "HTTP/1.0")) !=0) {
+	if ((n = strcmp(http_version, "HTTP/1.1")) !=0) { /*test for browser send http 1.1*/
+//	if ((n = strcmp(http_version, "HTTP/1.0")) !=0) {
 		send(clientfd, BAD_REQUEST, strlen(BAD_REQUEST), 0);
 		send(clientfd,SERVER_STRING,strlen(SERVER_STRING),0);
 		send(clientfd,CONTENT,strlen(CONTENT),0);
@@ -299,7 +299,7 @@ void handle_request(int clientfd){
 	if ((n = strcmp(method, "HEAD")) == 0)
 		handle_head(clientfd,path);
 	if((n = strcmp(method, "GET")) == 0){
-		if(cgi){
+		if(c_flag != 0 && cgi_path != NULL && cgi != 0){
 			handle_cgi(clientfd,path);
 			close(clientfd);
 			return;
@@ -324,12 +324,11 @@ void handle_cgi(int clientfd, const char *path){
 	struct stat st;
 	if ((q = strchr(buf, '?')) != NULL) {
 		p = strtok(buf, "?");
-		realpath(p, abs_path);
+		realpath(cgi_path, abs_path);		/* cgi-path */
 		p = strtok(NULL, "?");
 		strcpy(query_string,p);		
 		if ((q = strchr(query_string, '&')) != NULL) {
 			p = strtok(query_string, "&");
-//			send(clientfd, "recerived 1\r\n", strlen("recerived 1\r\n"), 0);
 			strcpy(env,p);
 			if(strchr(env,'='))
 				putenv(env);
@@ -343,7 +342,11 @@ void handle_cgi(int clientfd, const char *path){
 				putenv(query_string);
 		}
 	}else 
-		realpath(path, abs_path);
+		realpath(cgi_path, abs_path);
+	/* chage /cgi-bin/ with cgi_path*/
+	p = strstr(buf, "cgi-bin");
+	for (int i = 0;i < (int)strlen("cgi-bin"); i++,p++){}
+	strcat(abs_path,p);
 	/*execute cgi*/
 	if (stat(abs_path, &st) == 0 && st.st_mode & S_IXUSR){	/* executable */
 		send(clientfd, CONNECT_SUCCESS, strlen(CONNECT_SUCCESS), 0);
@@ -451,7 +454,8 @@ void handle_get(int clientfd, const char *path, const char *modify){
 	realpath(path, abs_path);
 //	send(clientfd, abs_path, strlen(abs_path), 0);
 //	send(clientfd, "\r\n", 2, 0);
-	home = getenv("HOME");
+	home = "/Users"; 	/* mac */
+//	home = "/home";		/*netbsd*/
 	// for safety not root
 	if ((n = strncmp(abs_path, home, strlen(home))) != 0 ) {
 		send(clientfd, NOT_FOUND, strlen(NOT_FOUND), 0);
@@ -462,6 +466,7 @@ void handle_get(int clientfd, const char *path, const char *modify){
 	if ((dp = open(path, O_RDONLY)) < 0){
 		send(clientfd, NOT_FOUND, strlen(NOT_FOUND), 0);
 		send(clientfd, SERVER_STRING, strlen(SERVER_STRING), 0);
+		close(dp);
 		return;
 	}					
 	if ((stat(path, &st)) == -1) {
