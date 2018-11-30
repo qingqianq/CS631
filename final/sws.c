@@ -28,7 +28,7 @@ guangqiqing$ gcc  -Wall -g test.c -lmagic  -o mytest
 #define HEAD 10
 #define TIMESIZ BUFSIZ
 #define SERVER_STRING "Server: gqq version 1.0\r\n"
-#define UNIMPLEMENT "HTTP/1.0 500 Not Implement"
+#define SERVER_ERROR "HTTP/1.0 500 Internal Server Error\r\n"
 #define BAD_REQUEST "HTTP/1.0 400 Bad Request\r\n"
 #define CONNECT_SUCCESS "HTTP/1.0 200 OK\r\n"
 #define NOT_FOUND "HTTP/1.0 404 Not Found\r\n"
@@ -42,13 +42,15 @@ int build_ipv6_socket(u_short *port, const char *ip);
 int is_valid_ipv4(const char *ipv4);
 int is_valid_ipv6(const char *ipv6);
 void handle_request(int clientfd);
-void handle_head(int clientfd, const char *url);
+void handle_head(int clientfd, const char *path);
 void handle_get(int clientfd, const char *path, const char *modify);
 int read_line(int socket, char *buf, int size);
 int is_cgi(const char *url);
 int send_date(int clientfd);
 int send_modify(int clientfd, const char *path);
 void send_content(int clientfd, const char *path);
+void handle_cgi(int clientfd, const char *path);
+void send_cgi_error(int clientfd);
 
 
 int c_flag = 0,d_flag = 0,h_flag = 0,i_flag = 0,l_flag = 0;
@@ -122,15 +124,12 @@ int main(int argc, char *argv[]) {
 	close(listenedfd);
 }
 
-
-
 int build_ipv4_socket(u_short *port, const char *ip){  //-p  -i
 	int sockfd;
 	struct sockaddr_in server_address;	
 	if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1){
 		perror("ipv4 socket error");
-		exit(EXIT_FAILURE);
-		
+		exit(EXIT_FAILURE);		
 	}
 	int reuse = 1;
 	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) == -1) {
@@ -251,19 +250,20 @@ void handle_request(int clientfd){
 	}
 	http_version[j] = '\0';
 	printf("version:%s\n",http_version);
+	/* not GET and HEAD method */
 	if (strcmp(method, "GET") && strcmp(method, "HEAD")) {	
-		send(clientfd, UNIMPLEMENT, strlen(UNIMPLEMENT), 0);
+		send(clientfd, BAD_REQUEST, strlen(BAD_REQUEST), 0);
 		send(clientfd,SERVER_STRING,strlen(SERVER_STRING),0);
-//		send(clientfd,CONTENT,strlen(CONTENT),0);
-//		send(clientfd, "Content-Length: 0\n", strlen("Content-Length: 0\n"), 0);
+		send(clientfd,CONTENT,strlen(CONTENT),0);
+		send(clientfd, "Content-Length: 0\n", strlen("Content-Length: 0\n"), 0);
 		send_date(clientfd);
 		close(clientfd);
 		return;
 	}
-//	if ((n = strcmp(http_version, "HTTP/1.1")) == 0){
-//		close(clientfd);
-//		return;
-//	}
+	if ((n = strcmp(http_version, "HTTP/1.1")) == 0){
+		close(clientfd);
+		return;
+	}
 	if ((n = strcmp(http_version, "HTTP/0.9")) == 0){
 		close(clientfd);
 		return;
@@ -299,14 +299,110 @@ void handle_request(int clientfd){
 	if ((n = strcmp(method, "HEAD")) == 0)
 		handle_head(clientfd,path);
 	if((n = strcmp(method, "GET")) == 0){
-//		if(cgi)
-//			handle_cgi()
+		if(cgi){
+			handle_cgi(clientfd,path);
+			close(clientfd);
+			return;
+		}			
 		handle_get(clientfd, path, modify);
-		bzero(modify, sizeof(modify));
+		bzero(modify, sizeof(modify)); 
 	}
 	close(clientfd);
 }
-
+/* 
+		set path by ?
+		set env by &
+*/
+void handle_cgi(int clientfd, const char *path){
+	char buf[BUFSIZ];
+	strcpy(buf,path);
+	char abs_path[BUFSIZ];
+	char query_string[BUFSIZ];
+	char env[BUFSIZ];
+	char *p = NULL;
+	char *q = NULL;
+	struct stat st;
+	if ((q = strchr(buf, '?')) != NULL) {
+		p = strtok(buf, "?");
+		realpath(p, abs_path);
+		p = strtok(NULL, "?");
+		strcpy(query_string,p);		
+		if ((q = strchr(query_string, '&')) != NULL) {
+			p = strtok(query_string, "&");
+//			send(clientfd, "recerived 1\r\n", strlen("recerived 1\r\n"), 0);
+			strcpy(env,p);
+			if(strchr(env,'='))
+				putenv(env);
+			while ((p = strtok(NULL, "&")) != NULL) {
+				strcpy(env,p);
+				if(strchr(env, '='))
+					putenv(env);
+			}
+		}else {
+			if(strchr(query_string, '='))
+				putenv(query_string);
+		}
+	}else 
+		realpath(path, abs_path);
+	/*execute cgi*/
+	if (stat(abs_path, &st) == 0 && st.st_mode & S_IXUSR){	/* executable */
+		send(clientfd, CONNECT_SUCCESS, strlen(CONNECT_SUCCESS), 0);
+		int cgi_output[2];
+		int cgi_input[2];
+		pid_t pid;
+		if (pipe(cgi_output) < 0){
+			send_cgi_error(clientfd);
+			return;
+		}			
+		if (pipe(cgi_input) < 0) {
+			send_cgi_error(clientfd);
+			return;
+		}			
+		if ((pid = fork()) < 0) {
+			send_cgi_error(clientfd);
+			return;
+		}
+		if(pid == 0){ //child
+			close(cgi_output[0]);
+			close(cgi_input[1]);
+			dup2(cgi_output[1],STDOUT_FILENO);
+			dup2(cgi_input[0], STDIN_FILENO);
+			execl(abs_path, abs_path, NULL);
+			exit(EXIT_SUCCESS);
+		}else { //parent
+			int size = 0, n = 0;
+			char content_buf[CONTENTBUF];
+			content_buf[0] = '\0';
+			close(cgi_output[1]);
+			close(cgi_input[0]);
+			send_date(clientfd);
+			send(clientfd,SERVER_STRING,strlen(SERVER_STRING),0);
+			send_modify(clientfd, abs_path);
+			send_content(clientfd, abs_path);
+			while ((n = read(cgi_output[0], buf, sizeof(buf))) > 0){
+				size += n;
+				strcat(content_buf,buf);
+			}			
+			sprintf(buf,"Content-Length: %d\r\n",size);
+			send(clientfd, buf, strlen(buf), 0);
+			send(clientfd,"\r\n",2,0);
+			send(clientfd,content_buf,strlen(content_buf),0);
+			send(clientfd,"\r\n",2,0);
+			close(cgi_output[0]);
+			close(cgi_input[1]);
+			waitpid(pid, NULL, 0);
+		}
+	}else{
+		send(clientfd, NOT_FOUND, strlen(NOT_FOUND), 0);
+		send_date(clientfd);
+		send(clientfd, SERVER_STRING, strlen(SERVER_STRING), 0);
+	}
+}
+void send_cgi_error(int clientfd){
+	send(clientfd, SERVER_ERROR, strlen(SERVER_ERROR), 0);
+	send_date(clientfd);
+	send(clientfd,SERVER_STRING,strlen(SERVER_STRING),0);
+}
 int is_cgi(const char *url){
 	int n;
 	char buf[BUFSIZ];
@@ -337,14 +433,14 @@ void handle_head(int clientfd, const char *path){
 		send_date(clientfd);
 		send(clientfd, SERVER_STRING, strlen(SERVER_STRING), 0);
 		send_modify(clientfd, path);
-		send(clientfd, CONTENT, strlen(CONTENT), 0);
+		send_content(clientfd, path);
 		send(clientfd, "Content-Length: 0\r\n", strlen("Content-Length: 0\r\n"), 0);
 	}	
 }
 void handle_get(int clientfd, const char *path, const char *modify){
 	int dp,n;	
 	char buf[TIMESIZ];
-	char conntent_buf[CONTENTBUF];
+	char content_buf[CONTENTBUF];
 	char *home = NULL;
 	char abs_path[BUFSIZ];
 	struct stat st;
@@ -400,18 +496,18 @@ void handle_get(int clientfd, const char *path, const char *modify){
 //		send(clientfd, buf, strlen(buf), 0);
 //		sprintf(buf, "<BODY>\r\n");
 //		send(clientfd, buf, strlen(buf), 0);
-		conntent_buf[0] = '\0';
+		content_buf[0] = '\0';
 		for (int i = 0 ;i < n; i++) {
 			if(namelist[i]->d_name[0] == '.')
 				continue;
-//			strcat(conntent_buf,"<P>");
-			strcat(conntent_buf,namelist[i]->d_name);
-			strcat(conntent_buf,"\r\n");
+//			strcat(content_buf,"<P>");
+			strcat(content_buf,namelist[i]->d_name);
+			strcat(content_buf,"\r\n");
 		}
-		sprintf(buf,"Content-Length: %d\r\n",(int)strlen(conntent_buf));
+		sprintf(buf,"Content-Length: %d\r\n",(int)strlen(content_buf));
 		send(clientfd, buf, strlen(buf), 0);
 		send(clientfd,"\r\n",strlen("\r\n"),0);
-		send(clientfd, conntent_buf, strlen(conntent_buf), 0);
+		send(clientfd, content_buf, strlen(content_buf), 0);
 //		sprintf(buf, "</BODY></HTML>\r\n");
 //		send(clientfd, buf, strlen(buf), 0);
 	}else { /* file */
@@ -490,7 +586,8 @@ int is_valid_ipv6(const char *ipv6){
 int logging(){
 	return 0;
 }
-/* magic 5 and use libmagic 
+/* 
+	magic 5 and use libmagic package
 	compile with -lmagic
 */
 void send_content(int clientfd, const char *path){
