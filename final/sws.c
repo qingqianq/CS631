@@ -1,6 +1,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 
 #include <netinet/in.h>
 #include <stdio.h>
@@ -18,6 +19,7 @@ nc 127.0.0.1 8080 nc ::1 8080
 GET /../one/ HTTP/1.0
 abc def abd
 If-Modified-Since: Sun, 30 Sep 2018 17:58:49 GMT
+
 
 
 guangqiqing$ gcc  -Wall -g test.c -lmagic  -o sws
@@ -242,7 +244,6 @@ void handle_request(int clientfd){
 		/*delete ~ */	
 		query_string++;
 		query_string++;
-//		printf("after++ :%s\n",query_string);
 		memset(path_buf,0,sizeof(path_buf));
 		strcpy(new_user,query_string);
 		q = strstr(query_string, "/");
@@ -455,25 +456,28 @@ void handle_head(int clientfd, const char *path){
 	}	
 }
 void handle_get(int clientfd, const char *path, const char *modify){
-	int dp,n;	
+	int dp, n, c;	
 	char buf[TIMESIZ];
 	char content_buf[CONTENTBUF];
 	char *home = NULL;
 	char abs_path[BUFSIZ];
 	struct stat st;
+	struct stat sp;
 	struct tm ts;
 	struct dirent **namelist;
 	/* abs_path should be same with home */ 	
 	home = (char *)malloc((size_t)BUFSIZ);
 	realpath(path, abs_path);
-//	home = "/Users"; 	/* mac */
-	home = "/home";		/*netbsd*/
+	home = "/home";	
+#if defined(__APPLE__) && defined(__MACH__)
+	home = "/Users";
+#endif
 	/* the dir has to be /home*/
 	if ((n = strncmp(abs_path, home, strlen(home))) != 0 ) {
 		send(clientfd, NOT_FOUND, strlen(NOT_FOUND), 0);
 		send_date(clientfd);
 		send(clientfd, SERVER_STRING, strlen(SERVER_STRING), 0);
-		return;
+		return; 
 	}
 	if ((dp = open(path, O_RDONLY)) < 0){
 		send(clientfd, NOT_FOUND, strlen(NOT_FOUND), 0);
@@ -503,6 +507,22 @@ void handle_get(int clientfd, const char *path, const char *modify){
 		send_content(clientfd, path);
 	}
 	if (S_ISDIR(st.st_mode)) { /* dir use alphasort to sort*/
+		/* index.html */
+		char temp[BUFSIZ];
+		strcpy(temp,path);
+		c = (int)strlen(temp) - 1;
+		temp[c] == '/' ? strcat(temp, "index.html") : strcat(temp, "/index.html");
+		if (stat(temp, &sp) == 0) {
+			sprintf(buf,"Content-Length: %d\r\n",(int)st.st_size);
+			send(clientfd, buf, strlen(buf), 0);
+			send(clientfd,"\r\n",strlen("\r\n"),0);
+			dp = open(temp, O_RDONLY);
+			memset(buf,0,sizeof(buf));
+			while ((n = read(dp, buf, BUFSIZ)) > 0)
+				send(clientfd, buf,strlen(buf),0);
+			send(clientfd,"\r\n",strlen("\r\n"),0);
+			return;
+		}
 		if ((n = scandir(path, &namelist, 0, alphasort)) < 0) {
 			perror("sancdir error");
 			return;
@@ -518,7 +538,7 @@ void handle_get(int clientfd, const char *path, const char *modify){
 		for (int i = 0 ;i < n; i++) {
 			if(namelist[i]->d_name[0] == '.')
 				continue;
-//			strcat(content_buf,"<P>");
+//			strcat(content_buf,"<P>"); 
 			strcat(content_buf,namelist[i]->d_name);
 			strcat(content_buf,"\r\n");
 		}
@@ -532,8 +552,9 @@ void handle_get(int clientfd, const char *path, const char *modify){
 		sprintf(buf,"Content-Length: %d\r\n",(int)st.st_size);
 		send(clientfd, buf, strlen(buf), 0);
 		send(clientfd,"\r\n",strlen("\r\n"),0);
+		memset(buf,0,sizeof(buf));
 		while ((n = read(dp, buf, BUFSIZ)) > 0)
-			send(clientfd,buf,strlen(buf),0);
+			send(clientfd, buf,strlen(buf),0);
 		send(clientfd,"\r\n",strlen("\r\n"),0);
 	}
 }
