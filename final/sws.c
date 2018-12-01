@@ -51,7 +51,7 @@ int send_modify(int clientfd, const char *path);
 void send_content(int clientfd, const char *path);
 void handle_cgi(int clientfd, const char *path);
 void send_cgi_error(int clientfd);
-
+char *replace (const char *s, const char *oldW, const char *newW);
 
 int c_flag = 0,d_flag = 0,h_flag = 0,i_flag = 0,l_flag = 0;
 u_short port = DEFAULTPORT;
@@ -101,7 +101,10 @@ int main(int argc, char *argv[]) {
 		exit(EXIT_FAILURE);
 	}
 	if (l_flag == 1 && log_file != NULL) {
-//		log_fd = open(*log_file,O_CREAT);
+		if ((log_fd = open(log_file,O_CREAT|O_APPEND|O_RDWR,S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) < 0 ){
+			perror("create log_file error");
+			exit(EXIT_SUCCESS);
+		}
 	}
 	if (i_flag == 1) {
 		if (is_valid_ipv4(ip)) {
@@ -232,8 +235,24 @@ void handle_request(int clientfd){
 	}
 	/* wrong understanding here */
 	if (query_string[1] == '~') {
+		char path_buf[BUFSIZ];
+		char new_user[BUFSIZ];
+		char *p = NULL;
+		char *q = NULL;
+		/*delete ~ */	
 		query_string++;
-		strcat(path,query_string);
+		query_string++;
+//		printf("after++ :%s\n",query_string);
+		memset(path_buf,0,sizeof(path_buf));
+		strcpy(new_user,query_string);
+		q = strstr(query_string, "/");
+		p = strtok(new_user, "/");
+//		printf("new_user: %s\n",new_user);
+//		printf("querstring: %s\n",query_string);
+		p = getenv("USER");
+		if (p)
+			path = replace(path, p, new_user);
+		strcat(path,q);
 	}else
 		strcat(path,url);
 	printf("path: %s\n",path);
@@ -415,12 +434,7 @@ int is_cgi(const char *url){
 			return 1;
 		return 0;
 	}
-	if (url[0] == '~') {
-		if ((n = strncmp(buf, "~/cgi-bin/",sizeof("~/cgi-bin/") - 1)) == 0)
-			return 1;
-		return 0;
-	}
-	return 0;	
+	return 0;
 }
 
 void handle_head(int clientfd, const char *path){
@@ -452,11 +466,9 @@ void handle_get(int clientfd, const char *path, const char *modify){
 	/* abs_path should be same with home */ 	
 	home = (char *)malloc((size_t)BUFSIZ);
 	realpath(path, abs_path);
-//	send(clientfd, abs_path, strlen(abs_path), 0);
-//	send(clientfd, "\r\n", 2, 0);
 	home = "/Users"; 	/* mac */
 //	home = "/home";		/*netbsd*/
-	// for safety not root
+	/* the dir has to be /home*/
 	if ((n = strncmp(abs_path, home, strlen(home))) != 0 ) {
 		send(clientfd, NOT_FOUND, strlen(NOT_FOUND), 0);
 		send_date(clientfd);
@@ -465,6 +477,7 @@ void handle_get(int clientfd, const char *path, const char *modify){
 	}
 	if ((dp = open(path, O_RDONLY)) < 0){
 		send(clientfd, NOT_FOUND, strlen(NOT_FOUND), 0);
+		send_date(clientfd);
 		send(clientfd, SERVER_STRING, strlen(SERVER_STRING), 0);
 		close(dp);
 		return;
@@ -489,7 +502,7 @@ void handle_get(int clientfd, const char *path, const char *modify){
 		send_modify(clientfd, path);
 		send_content(clientfd, path);
 	}
-	if (S_ISDIR(st.st_mode)) {
+	if (S_ISDIR(st.st_mode)) { /* dir use alphasort to sort*/
 		if ((n = scandir(path, &namelist, 0, alphasort)) < 0) {
 			perror("sancdir error");
 			return;
@@ -605,4 +618,29 @@ void send_content(int clientfd, const char *path){
 	sprintf(buf, "Content-Type: %s\r\n",mime);
 	send(clientfd, buf, strlen(buf) , 0);
 	magic_close(magic);
+}
+char *replace (const char *s, const char *oldW, const char *newW) { 
+	char *result; 
+	int i, cnt = 0; 
+	int newWlen = strlen(newW); 
+	int oldWlen = strlen(oldW); 
+	for (i = 0; s[i] != '\0'; i++) { 
+		if (strstr(&s[i], oldW) == &s[i]) { 
+			cnt++; 
+			i += oldWlen - 1; 
+		} 
+	}
+	result = (char *)malloc(i + cnt * (newWlen - oldWlen) + 1);
+	i = 0; 
+	while (*s) { 
+		if (strstr(s, oldW) == s) { 
+			strcpy(&result[i], newW); 
+			i += newWlen; 
+			s += oldWlen; 
+		} 
+		else
+			result[i++] = *s++; 
+	}   
+	result[i] = '\0'; 
+	return result; 
 }
