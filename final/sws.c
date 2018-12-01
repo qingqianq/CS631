@@ -20,7 +20,7 @@ abc def abd
 If-Modified-Since: Sun, 30 Sep 2018 17:58:49 GMT
 
 
-guangqiqing$ gcc  -Wall -g test.c -lmagic  -o mytest
+guangqiqing$ gcc  -Wall -g test.c -lmagic  -o sws
 */
 #define LISTENSIZE 5
 #define DEFAULTPORT 8080
@@ -279,16 +279,16 @@ void handle_request(int clientfd){
 		close(clientfd);
 		return;
 	}
-//	if ((n = strcmp(http_version, "HTTP/1.1")) == 0){
-//		close(clientfd);
-//		return;
-//	}
+	if ((n = strcmp(http_version, "HTTP/1.1")) == 0){
+		close(clientfd);
+		return;
+	}
 	if ((n = strcmp(http_version, "HTTP/0.9")) == 0){
 		close(clientfd);
 		return;
 	}
-	if ((n = strcmp(http_version, "HTTP/1.1")) !=0) { /*test for browser send http 1.1*/
-//	if ((n = strcmp(http_version, "HTTP/1.0")) !=0) {
+//	if ((n = strcmp(http_version, "HTTP/1.1")) !=0) { /*test for browser send http 1.1*/
+	if ((n = strcmp(http_version, "HTTP/1.0")) !=0) {
 		send(clientfd, BAD_REQUEST, strlen(BAD_REQUEST), 0);
 		send(clientfd,SERVER_STRING,strlen(SERVER_STRING),0);
 		send(clientfd,CONTENT,strlen(CONTENT),0);
@@ -466,8 +466,8 @@ void handle_get(int clientfd, const char *path, const char *modify){
 	/* abs_path should be same with home */ 	
 	home = (char *)malloc((size_t)BUFSIZ);
 	realpath(path, abs_path);
-	home = "/Users"; 	/* mac */
-//	home = "/home";		/*netbsd*/
+//	home = "/Users"; 	/* mac */
+	home = "/home";		/*netbsd*/
 	/* the dir has to be /home*/
 	if ((n = strncmp(abs_path, home, strlen(home))) != 0 ) {
 		send(clientfd, NOT_FOUND, strlen(NOT_FOUND), 0);
