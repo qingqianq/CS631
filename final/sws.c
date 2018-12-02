@@ -22,7 +22,7 @@ abc def abd
 If-Modified-Since: Sat, 01 Dec 2018 19:30:33 GMT
 
 ./a.out -c ./httpd -l ./log.txt -p 8080 ./
-
+Segmentation fault (core dumped)
 
 gcc -Wall -Werror -Wextra sws.c -lmagic
 */
@@ -57,13 +57,14 @@ void handle_cgi(int clientfd, const char *path);
 void send_cgi_error(int clientfd);
 char *replace (const char *s, const char *oldW, const char *newW);
 void log_ip(int clientfd);
+void *accept_ipv6(void *);
 
 int c_flag = 0,d_flag = 0,h_flag = 0,i_flag = 0,l_flag = 0;
 u_short port = DEFAULTPORT;
 int log_fd = 0;
 const char *cgi_path, *sws, *ip, *log_file = NULL;
 int main(int argc, char *argv[]) {
-	int listenedfd;
+	int listenedfd,listenedfd_ipv6;
 	int clientfd;
 	struct sockaddr_in6 client;
 	char opt;
@@ -118,12 +119,34 @@ int main(int argc, char *argv[]) {
 		if (is_valid_ipv6(ip)) {
 			listenedfd = build_ipv6_socket(&port, ip);
 		}
-	}else 
+	}else {
 		listenedfd = build_ipv4_socket(&port, ip);
+		listenedfd_ipv6 = build_ipv6_socket(&port, ip);
+	}
+		
 	int client_len = sizeof(client);	
-	// user a new thread to listen ipv6
-	
-	
+	/* use a new thread to listen ipv6 */
+	pthread_t ipv6_thread;
+	if (pthread_create(&ipv6_thread, NULL, accept_ipv6, (void*)&listenedfd_ipv6) != 0)
+		perror("create ipv6 error");	
+	while (1) {
+		if((clientfd = accept(listenedfd, (struct sockaddr *)&client, (socklen_t *)&client_len)) == -1){
+			perror("accept error");
+			exit(EXIT_FAILURE);
+		}
+		if (log_fd > 0 && l_flag == 1)
+			log_ip(clientfd);
+		handle_request(clientfd);
+	}
+	close(listenedfd);
+	return  EXIT_SUCCESS;
+}
+
+void *accept_ipv6(void* listened){
+	int listenedfd = *(int *)listened;
+	struct sockaddr_in6 client;
+	int client_len = sizeof(client);
+	int clientfd;
 	while (1) {
 		if((clientfd = accept(listenedfd, (struct sockaddr *)&client, (socklen_t *)&client_len)) == -1){
 			perror("accept error");
@@ -182,8 +205,6 @@ void log_ip(int clientfd){
 		inet_ntop(AF_INET, &s->sin_addr,ip_address, (socklen_t)INET_ADDRSTRLEN);
 		sprintf(buf,"%s:%d ",ip_address,port);
 		write(log_fd, buf, strlen(buf));
-//		printf("Peer IP address: %s\n", ip_address);
-//		printf("Peer port      : %d\n", port);
 	}else {
 		char ip_address[INET6_ADDRSTRLEN];
 		struct sockaddr_in6 *s = (struct sockaddr_in6 *)&addr;
@@ -191,8 +212,6 @@ void log_ip(int clientfd){
 		inet_ntop(AF_INET6, &s->sin6_addr, ip_address, INET6_ADDRSTRLEN);
 		sprintf(buf,"%s:%d ",ip_address,port);
 		write(log_fd, buf, strlen(buf));
-//		printf("Peer IP address: %s\n", ip_address);
-//		printf("Peer port      : %d\n", port);
 	}
 }
 
@@ -248,7 +267,6 @@ void handle_request(int clientfd){
 	}
 	method[i] = '\0';
 	printf("method: %s\n",method);
-//	i++;
 	while (isspace(buf[i])) {
 		i++;
 	}
@@ -278,7 +296,6 @@ void handle_request(int clientfd){
 		perror("get path error\n");
 		exit(EXIT_FAILURE);
 	}
-	/* wrong understanding here */
 	if (query_string[1] == '~') {
 		char path_buf[BUFSIZ];
 		char new_user[BUFSIZ];
@@ -291,8 +308,6 @@ void handle_request(int clientfd){
 		strcpy(new_user,query_string);
 		q = strstr(query_string, "/");
 		p = strtok(new_user, "/");
-//		printf("new_user: %s\n",new_user);
-//		printf("querstring: %s\n",query_string);
 		p = getenv("USER");
 		if (p)
 			path = replace(path, p, new_user);
@@ -469,7 +484,6 @@ void handle_cgi(int clientfd, const char *path){
 				write(log_fd, buf, strlen(buf));
 			send(clientfd,"\r\n",2,0);
 			send(clientfd,content_buf,size,0);
-//			send(clientfd,"\r\n",2,0);
 			close(cgi_output[0]);
 			close(cgi_input[1]);
 			waitpid(pid, NULL, 0);
@@ -505,7 +519,6 @@ int is_cgi(const char *url){
 
 void handle_head(int clientfd, const char *path){
 	int dp;	
-	// here may be safe problem maybe ~/../../   maybe root
 	if ((dp = open(path, O_RDONLY)) < 0){
 		send(clientfd, NOT_FOUND, strlen(NOT_FOUND), 0);
 		if (log_fd > 0 && l_flag == 1)
@@ -536,7 +549,7 @@ void handle_get(int clientfd, const char *path, const char *modify){
 	struct stat sp;
 	struct tm ts;
 	struct dirent **namelist;
-	/* abs_path should be same with home */ 	
+	/* abs_path should not out of with home */ 	
 	home = (char *)malloc((size_t)BUFSIZ);
 	realpath(path, abs_path);
 	home = "/home";	
@@ -716,7 +729,7 @@ int is_valid_ipv6(const char *ipv6){
 	return 0;
 }
 /* 
-	magic 5 and use libmagic package
+	magic 5 and use libmagic package which mac donot have
 	compile with -lmagic
 */
 void send_content(int clientfd, const char *path){
