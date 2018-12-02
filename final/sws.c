@@ -24,7 +24,6 @@ If-Modified-Since: Sat, 01 Dec 2018 19:30:33 GMT
 ./a.out -c ./httpd -l ./log.txt -p 8080 ./
 Segmentation fault (core dumped)
 
-gcc -Wall -Werror -Wextra sws.c -lmagic
 */
 #define LISTENSIZE 5
 #define DEFAULTPORT 8080
@@ -45,7 +44,7 @@ int build_ipv4_socket(u_short *port, const char *ip);
 int build_ipv6_socket(u_short *port, const char *ip);
 int is_valid_ipv4(const char *ipv4);
 int is_valid_ipv6(const char *ipv6);
-void handle_request(int clientfd);
+void *handle_request(void* client);
 void handle_head(int clientfd, const char *path);
 void handle_get(int clientfd, const char *path, const char *modify);
 int read_line(int socket, char *buf, int size);
@@ -66,7 +65,7 @@ const char *cgi_path, *sws, *ip, *log_file = NULL;
 int main(int argc, char *argv[]) {
 	int listenedfd,listenedfd_ipv6;
 	int clientfd;
-	struct sockaddr_in6 client;
+	struct sockaddr_in client;
 	char opt;
 	while ((opt = getopt(argc, argv, "c:dhi:l:p:")) != -1) {
 		switch(opt){
@@ -126,7 +125,7 @@ int main(int argc, char *argv[]) {
 		
 	int client_len = sizeof(client);	
 	/* use a new thread to listen ipv6 */
-	pthread_t ipv6_thread;
+	pthread_t ipv6_thread, client_thread;
 	if (pthread_create(&ipv6_thread, NULL, accept_ipv6, (void*)&listenedfd_ipv6) != 0)
 		perror("create ipv6 error");	
 	while (1) {
@@ -136,7 +135,12 @@ int main(int argc, char *argv[]) {
 		}
 		if (log_fd > 0 && l_flag == 1)
 			log_ip(clientfd);
-		handle_request(clientfd);
+		if(d_flag)
+			handle_request(&clientfd);
+		else { /* create a thread to handle 2 request */
+			if(pthread_create(&client_thread, NULL, handle_request, &clientfd) != 0)
+				perror("create thread error");
+		}
 	}
 	close(listenedfd);
 	return  EXIT_SUCCESS;
@@ -147,6 +151,7 @@ void *accept_ipv6(void* listened){
 	struct sockaddr_in6 client;
 	int client_len = sizeof(client);
 	int clientfd;
+	pthread_t client_thread;
 	while (1) {
 		if((clientfd = accept(listenedfd, (struct sockaddr *)&client, (socklen_t *)&client_len)) == -1){
 			perror("accept error");
@@ -154,7 +159,12 @@ void *accept_ipv6(void* listened){
 		}
 		if (log_fd > 0 && l_flag == 1)
 			log_ip(clientfd);
-		handle_request(clientfd);
+		if(d_flag)
+			handle_request(&clientfd);
+		else {
+			if(pthread_create(&client_thread, NULL, handle_request, &clientfd) != 0)
+				perror("create thread error");
+		}
 	}
 	close(listenedfd);
 }
@@ -245,7 +255,8 @@ int build_ipv6_socket(u_short *port, const char *ip){
 	return sockfd;
 }
 
-void handle_request(int clientfd){
+void *handle_request(void* client){
+	int clientfd = *(int *)client;
 	char buf[BUFSIZ];
 	char method[BUFSIZ];
 	char url[BUFSIZ];
@@ -340,15 +351,15 @@ void handle_request(int clientfd){
 		if (log_fd > 0 && l_flag == 1)
 			write(log_fd, " Content-Length: 0\n", strlen(" Content-Length: 0\n"));
 		close(clientfd);
-		return;
+		return NULL;
 	}
 	if ((n = strcmp(http_version, "HTTP/1.1")) == 0){
 		close(clientfd);
-		return;
+		return NULL;
 	}
 	if ((n = strcmp(http_version, "HTTP/0.9")) == 0){
 		close(clientfd);
-		return;
+		return NULL;
 	}
 //	if ((n = strcmp(http_version, "HTTP/1.1")) !=0) { /*test for browser send http 1.1*/
 	if ((n = strcmp(http_version, "HTTP/1.0")) !=0) {
@@ -362,7 +373,7 @@ void handle_request(int clientfd){
 			write(log_fd, " Content-Length: 0\n", strlen(" Content-Length: 0\n"));
 		send_date(clientfd);
 		close(clientfd);
-		return;
+		return NULL;
 	}
 	
 	/* read if-modify-scince */
@@ -389,12 +400,13 @@ void handle_request(int clientfd){
 		if(c_flag != 0 && cgi_path != NULL && cgi != 0){
 			handle_cgi(clientfd,path);
 			close(clientfd);
-			return;
+			return NULL;
 		}			
 		handle_get(clientfd, path, modify);
 		bzero(modify, sizeof(modify)); 
 	}
 	close(clientfd);
+	return NULL;
 }
 /* 
 		set path by ?
