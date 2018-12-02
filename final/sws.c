@@ -14,15 +14,17 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <magic.h>
+#include <pthread.h>
 /*
 nc 127.0.0.1 8080 nc ::1 8080
 GET /../one/ HTTP/1.0
 abc def abd
-If-Modified-Since: Sun, 30 Sep 2018 17:58:49 GMT
+If-Modified-Since: Sat, 01 Dec 2018 19:30:33 GMT
+
+./a.out -c ./httpd -l ./log.txt -p 8080 ./
 
 
-
-guangqiqing$ gcc  -Wall -g test.c -lmagic  -o sws
+gcc -Wall -Werror -Wextra sws.c -lmagic
 */
 #define LISTENSIZE 5
 #define DEFAULTPORT 8080
@@ -54,6 +56,7 @@ void send_content(int clientfd, const char *path);
 void handle_cgi(int clientfd, const char *path);
 void send_cgi_error(int clientfd);
 char *replace (const char *s, const char *oldW, const char *newW);
+void log_ip(int clientfd);
 
 int c_flag = 0,d_flag = 0,h_flag = 0,i_flag = 0,l_flag = 0;
 u_short port = DEFAULTPORT;
@@ -103,9 +106,9 @@ int main(int argc, char *argv[]) {
 		exit(EXIT_FAILURE);
 	}
 	if (l_flag == 1 && log_file != NULL) {
-		if ((log_fd = open(log_file,O_CREAT|O_APPEND|O_RDWR,S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) < 0 ){
+		if ((log_fd = open(log_file,O_CREAT|O_APPEND|O_RDWR,S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH)) <= 0 ){
 			perror("create log_file error");
-			exit(EXIT_SUCCESS);
+			exit(EXIT_FAILURE);
 		}
 	}
 	if (i_flag == 1) {
@@ -116,13 +119,18 @@ int main(int argc, char *argv[]) {
 			listenedfd = build_ipv6_socket(&port, ip);
 		}
 	}else 
-		listenedfd = build_ipv6_socket(&port, ip);
-	int client_len = sizeof(client);
+		listenedfd = build_ipv4_socket(&port, ip);
+	int client_len = sizeof(client);	
+	// user a new thread to listen ipv6
+	
+	
 	while (1) {
 		if((clientfd = accept(listenedfd, (struct sockaddr *)&client, (socklen_t *)&client_len)) == -1){
 			perror("accept error");
 			exit(EXIT_FAILURE);
 		}
+		if (log_fd > 0 && l_flag == 1)
+			log_ip(clientfd);
 		handle_request(clientfd);
 	}
 	close(listenedfd);
@@ -157,6 +165,37 @@ int build_ipv4_socket(u_short *port, const char *ip){  //-p  -i
 	}
 	return sockfd;
 }
+void log_ip(int clientfd){
+	socklen_t len;
+	struct sockaddr_storage addr;
+	u_short port;
+	char buf[BUFSIZ];
+	
+	if (getpeername(clientfd, (struct sockaddr*)&addr, &len) == -1) {
+		printf("log error");
+		return;
+	}
+	if (addr.ss_family == AF_INET) { //ipv4
+		char ip_address[INET_ADDRSTRLEN];
+		struct sockaddr_in *s = (struct sockaddr_in *)&addr;
+		port = ntohs(s->sin_port);
+		inet_ntop(AF_INET, &s->sin_addr,ip_address, (socklen_t)INET_ADDRSTRLEN);
+		sprintf(buf,"%s:%d ",ip_address,port);
+		write(log_fd, buf, strlen(buf));
+//		printf("Peer IP address: %s\n", ip_address);
+//		printf("Peer port      : %d\n", port);
+	}else {
+		char ip_address[INET6_ADDRSTRLEN];
+		struct sockaddr_in6 *s = (struct sockaddr_in6 *)&addr;
+		port = ntohs(s->sin6_port);
+		inet_ntop(AF_INET6, &s->sin6_addr, ip_address, INET6_ADDRSTRLEN);
+		sprintf(buf,"%s:%d ",ip_address,port);
+		write(log_fd, buf, strlen(buf));
+//		printf("Peer IP address: %s\n", ip_address);
+//		printf("Peer port      : %d\n", port);
+	}
+}
+
 int build_ipv6_socket(u_short *port, const char *ip){
 	int sockfd;
 	struct sockaddr_in6 server_address;
@@ -198,6 +237,10 @@ void handle_request(int clientfd){
 	char *query_string = NULL;
 	int i = 0, j = 0, cgi = 0;
 	int n = read_line(clientfd, buf, BUFSIZ);
+	if (log_fd > 0 && l_flag == 1){
+		write(log_fd, buf, strlen(buf) - 1);
+		write(log_fd, " ", strlen(" "));
+	}
 	struct stat st;
 	while(!isspace(buf[i]) && i < BUFSIZ - 1){
 		method[i] = buf[i];
@@ -273,10 +316,14 @@ void handle_request(int clientfd){
 	/* not GET and HEAD method */
 	if (strcmp(method, "GET") && strcmp(method, "HEAD")) {	
 		send(clientfd, BAD_REQUEST, strlen(BAD_REQUEST), 0);
+		if (log_fd > 0 && l_flag == 1)
+			write(log_fd, BAD_REQUEST, strlen(BAD_REQUEST) - 2);
+		send_date(clientfd);
 		send(clientfd,SERVER_STRING,strlen(SERVER_STRING),0);
 		send(clientfd,CONTENT,strlen(CONTENT),0);
 		send(clientfd, "Content-Length: 0\n", strlen("Content-Length: 0\n"), 0);
-		send_date(clientfd);
+		if (log_fd > 0 && l_flag == 1)
+			write(log_fd, " Content-Length: 0\n", strlen(" Content-Length: 0\n"));
 		close(clientfd);
 		return;
 	}
@@ -291,9 +338,13 @@ void handle_request(int clientfd){
 //	if ((n = strcmp(http_version, "HTTP/1.1")) !=0) { /*test for browser send http 1.1*/
 	if ((n = strcmp(http_version, "HTTP/1.0")) !=0) {
 		send(clientfd, BAD_REQUEST, strlen(BAD_REQUEST), 0);
+		if (log_fd > 0 && l_flag == 1)
+			write(log_fd, BAD_REQUEST, strlen(BAD_REQUEST) - 2);
 		send(clientfd,SERVER_STRING,strlen(SERVER_STRING),0);
 		send(clientfd,CONTENT,strlen(CONTENT),0);
 		send(clientfd, "Content-Length: 0\r\n", strlen("Content-Length: 0\r\n"), 0);
+		if (log_fd > 0 && l_flag == 1)
+			write(log_fd, " Content-Length: 0\n", strlen(" Content-Length: 0\n"));
 		send_date(clientfd);
 		close(clientfd);
 		return;
@@ -312,9 +363,10 @@ void handle_request(int clientfd){
 			j++;
 		}
 		temp[j] = '\0';
-		printf("%s\n",temp);
-		if ((n = strcmp(temp, "If-Modified-Since:")) == 0)
+		if ((n = strcmp(temp, "If-Modified-Since:")) == 0){
 			strcpy(modify,buf);
+			printf("%s\n",modify);
+		}			
 	}
 	if ((n = strcmp(method, "HEAD")) == 0)
 		handle_head(clientfd,path);
@@ -346,7 +398,8 @@ void handle_cgi(int clientfd, const char *path){
 		p = strtok(buf, "?");
 		realpath(cgi_path, abs_path);		/* cgi-path */
 		p = strtok(NULL, "?");
-		strcpy(query_string,p);		
+		if (p)
+			strcpy(query_string,p);		
 		if ((q = strchr(query_string, '&')) != NULL) {
 			p = strtok(query_string, "&");
 			strcpy(env,p);
@@ -370,6 +423,8 @@ void handle_cgi(int clientfd, const char *path){
 	/*execute cgi*/
 	if (stat(abs_path, &st) == 0 && st.st_mode & S_IXUSR){	/* executable */
 		send(clientfd, CONNECT_SUCCESS, strlen(CONNECT_SUCCESS), 0);
+		if (log_fd > 0 && l_flag == 1)
+			write(log_fd, CONNECT_SUCCESS, strlen(CONNECT_SUCCESS) - 2);
 		int cgi_output[2];
 		int cgi_input[2];
 		pid_t pid;
@@ -402,30 +457,40 @@ void handle_cgi(int clientfd, const char *path){
 			send(clientfd,SERVER_STRING,strlen(SERVER_STRING),0);
 			send_modify(clientfd, abs_path);
 			send_content(clientfd, abs_path);
+			memset(content_buf,0,sizeof(content_buf));
+			memset(buf,0,sizeof(buf));
 			while ((n = read(cgi_output[0], buf, sizeof(buf))) > 0){
 				size += n;
 				strcat(content_buf,buf);
 			}			
 			sprintf(buf,"Content-Length: %d\r\n",size);
 			send(clientfd, buf, strlen(buf), 0);
+			if (log_fd > 0 && l_flag == 1)
+				write(log_fd, buf, strlen(buf));
 			send(clientfd,"\r\n",2,0);
-			send(clientfd,content_buf,strlen(content_buf),0);
-			send(clientfd,"\r\n",2,0);
+			send(clientfd,content_buf,size,0);
+//			send(clientfd,"\r\n",2,0);
 			close(cgi_output[0]);
 			close(cgi_input[1]);
 			waitpid(pid, NULL, 0);
 		}
 	}else{
 		send(clientfd, NOT_FOUND, strlen(NOT_FOUND), 0);
+		if (log_fd > 0 && l_flag == 1)
+			write(log_fd, NOT_FOUND, strlen(NOT_FOUND) - 2);
 		send_date(clientfd);
 		send(clientfd, SERVER_STRING, strlen(SERVER_STRING), 0);
 	}
 }
+
 void send_cgi_error(int clientfd){
 	send(clientfd, SERVER_ERROR, strlen(SERVER_ERROR), 0);
+	if (log_fd > 0 && l_flag == 1)
+		write(log_fd, SERVER_ERROR, strlen(SERVER_ERROR) - 2);
 	send_date(clientfd);
 	send(clientfd,SERVER_STRING,strlen(SERVER_STRING),0);
 }
+
 int is_cgi(const char *url){
 	int n;
 	char buf[BUFSIZ];
@@ -443,16 +508,22 @@ void handle_head(int clientfd, const char *path){
 	// here may be safe problem maybe ~/../../   maybe root
 	if ((dp = open(path, O_RDONLY)) < 0){
 		send(clientfd, NOT_FOUND, strlen(NOT_FOUND), 0);
+		if (log_fd > 0 && l_flag == 1)
+			write(log_fd, NOT_FOUND, strlen(NOT_FOUND) - 2);
 		send_date(clientfd);
 		send(clientfd, SERVER_STRING, strlen(SERVER_STRING), 0);
 	}				
 	else {		
 		send(clientfd, CONNECT_SUCCESS, strlen(CONNECT_SUCCESS), 0);
+		if (log_fd > 0 && l_flag == 1)
+			write(log_fd, CONNECT_SUCCESS, strlen(CONNECT_SUCCESS) - 2);
 		send_date(clientfd);
 		send(clientfd, SERVER_STRING, strlen(SERVER_STRING), 0);
 		send_modify(clientfd, path);
 		send_content(clientfd, path);
 		send(clientfd, "Content-Length: 0\r\n", strlen("Content-Length: 0\r\n"), 0);
+		if (log_fd > 0 && l_flag == 1)
+			write(log_fd, " Content-Length: 0\n", strlen(" Content-Length: 0\n"));
 	}	
 }
 void handle_get(int clientfd, const char *path, const char *modify){
@@ -472,15 +543,19 @@ void handle_get(int clientfd, const char *path, const char *modify){
 #if defined(__APPLE__) && defined(__MACH__)
 	home = "/Users";
 #endif
-	/* the dir has to be /home*/
+	/* can not get out of home */
 	if ((n = strncmp(abs_path, home, strlen(home))) != 0 ) {
 		send(clientfd, NOT_FOUND, strlen(NOT_FOUND), 0);
+		if (log_fd > 0 && l_flag == 1)
+			write(log_fd, NOT_FOUND, strlen(NOT_FOUND) - 2);
 		send_date(clientfd);
 		send(clientfd, SERVER_STRING, strlen(SERVER_STRING), 0);
 		return; 
 	}
 	if ((dp = open(path, O_RDONLY)) < 0){
 		send(clientfd, NOT_FOUND, strlen(NOT_FOUND), 0);
+		if (log_fd > 0 && l_flag == 1)
+			write(log_fd, NOT_FOUND, strlen(NOT_FOUND) - 2);
 		send_date(clientfd);
 		send(clientfd, SERVER_STRING, strlen(SERVER_STRING), 0);
 		close(dp);
@@ -494,13 +569,19 @@ void handle_get(int clientfd, const char *path, const char *modify){
 	strftime(buf, sizeof(buf), "If-Modified-Since: %a, %d %b %Y %H:%M:%S GMT\n", &ts);
 	if ((n = strcmp(buf, modify)) == 0) {
 		send(clientfd, NOT_MODIFIED, strlen(NOT_MODIFIED), 0);
+		if (log_fd > 0 && l_flag == 1)
+			write(log_fd, NOT_MODIFIED, strlen(NOT_MODIFIED) - 2);
 		send_date(clientfd);
 		send(clientfd, SERVER_STRING, strlen(SERVER_STRING), 0);
 		send_modify(clientfd, path);
 		send(clientfd, "Content-Length: 0\r\n", strlen("Content-Length: 0\r\n"), 0);
+		if (log_fd > 0 && l_flag == 1)
+			write(log_fd, " Content-Length: 0\n", strlen(" Content-Length: 0\n"));
 		return;
 	}else {
 		send(clientfd, CONNECT_SUCCESS, strlen(CONNECT_SUCCESS), 0);
+		if (log_fd > 0 && l_flag == 1)
+			write(log_fd, CONNECT_SUCCESS, strlen(CONNECT_SUCCESS) - 2);
 		send_date(clientfd);
 		send(clientfd, SERVER_STRING, strlen(SERVER_STRING), 0);
 		send_modify(clientfd, path);
@@ -515,12 +596,16 @@ void handle_get(int clientfd, const char *path, const char *modify){
 		if (stat(temp, &sp) == 0) {
 			sprintf(buf,"Content-Length: %d\r\n",(int)st.st_size);
 			send(clientfd, buf, strlen(buf), 0);
+			if (log_fd > 0 && l_flag == 1)
+				write(log_fd,buf, strlen(buf));
 			send(clientfd,"\r\n",strlen("\r\n"),0);
+			close(dp);
 			dp = open(temp, O_RDONLY);
 			memset(buf,0,sizeof(buf));
 			while ((n = read(dp, buf, BUFSIZ)) > 0)
 				send(clientfd, buf,strlen(buf),0);
 			send(clientfd,"\r\n",strlen("\r\n"),0);
+			close(dp);
 			return;
 		}
 		if ((n = scandir(path, &namelist, 0, alphasort)) < 0) {
@@ -544,6 +629,8 @@ void handle_get(int clientfd, const char *path, const char *modify){
 		}
 		sprintf(buf,"Content-Length: %d\r\n",(int)strlen(content_buf));
 		send(clientfd, buf, strlen(buf), 0);
+		if (log_fd > 0 && l_flag == 1)
+			write(log_fd, buf, strlen(buf));
 		send(clientfd,"\r\n",strlen("\r\n"),0);
 		send(clientfd, content_buf, strlen(content_buf), 0);
 //		sprintf(buf, "</BODY></HTML>\r\n");
@@ -551,11 +638,14 @@ void handle_get(int clientfd, const char *path, const char *modify){
 	}else { /* file */
 		sprintf(buf,"Content-Length: %d\r\n",(int)st.st_size);
 		send(clientfd, buf, strlen(buf), 0);
+		if (log_fd > 0 && l_flag == 1)
+			write(log_fd, buf, strlen(buf));
 		send(clientfd,"\r\n",strlen("\r\n"),0);
 		memset(buf,0,sizeof(buf));
 		while ((n = read(dp, buf, BUFSIZ)) > 0)
 			send(clientfd, buf,strlen(buf),0);
 		send(clientfd,"\r\n",strlen("\r\n"),0);
+		close(dp);
 	}
 }
 int send_date(int clientfd){
@@ -566,6 +656,10 @@ int send_date(int clientfd){
 	ts = *gmtime(&now);
 	strftime(buf, sizeof(buf), "Date: %a, %d %b %Y %H:%M:%S GMT\r\n", &ts);
 	send(clientfd, buf, strlen(buf), 0);
+	if (log_fd > 0 && l_flag == 1){
+		strftime(buf, sizeof(buf), " Date: %a, %d %b %Y %H:%M:%S GMT ", &ts);
+		write(log_fd, buf, strlen(buf));
+	}		
 	return 0;
 }
 int send_modify(int clientfd, const char *path){
@@ -619,10 +713,6 @@ int is_valid_ipv6(const char *ipv6){
 		return 0;
 	if(inet_pton(AF_INET6, ipv6, (void *)&addr6) == 1)
 		return 1;
-	return 0;
-}
-
-int logging(){
 	return 0;
 }
 /* 
