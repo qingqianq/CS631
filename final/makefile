@@ -1,5 +1,5 @@
 CC       = gcc
-CFLAGS   = -Wall -Werror -Wextra sws.c -lmagic -lpthread
+CFLAGS   = -Wall -Werror -Wextra -lmagic -lpthread
 OBJFILES = sws.c
 TARGET   = sws
 
