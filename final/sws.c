@@ -15,16 +15,7 @@
 #include <dirent.h>
 #include <magic.h>
 #include <pthread.h>
-/*
-nc 127.0.0.1 8080 nc ::1 8080
-GET /../one/ HTTP/1.0
-abc def abd
-If-Modified-Since: Sat, 01 Dec 2018 19:30:33 GMT
 
-./a.out -c ./httpd -l ./log.txt -p 8080 ./
-Segmentation fault (core dumped)
-
-*/
 #define LISTENSIZE 5
 #define DEFAULTPORT 8080
 #define METHODSIZ 10
@@ -97,7 +88,11 @@ int main(int argc, char *argv[]) {
 		exit(EXIT_SUCCESS);
 	}
 	if (d_flag == 0) {
-
+		if (daemon(1, 0) == -1) {
+			perror("daemon err\n");
+		}
+	}else {
+		printf("Debuging mode\n");
 	}
 	sws = argv[optind];
 	printf("sws_dir : %s\n",sws);
@@ -121,8 +116,7 @@ int main(int argc, char *argv[]) {
 	}else {
 		listenedfd = build_ipv4_socket(&port, ip);
 		listenedfd_ipv6 = build_ipv6_socket(&port, ip);
-	}
-		
+	}		
 	int client_len = sizeof(client);	
 	/* use a new thread to listen ipv6 */
 	pthread_t ipv6_thread, client_thread;
@@ -251,7 +245,6 @@ int build_ipv6_socket(u_short *port, const char *ip){
 		perror("ipv4 listen error");
 		exit(EXIT_FAILURE);
 	}
-
 	return sockfd;
 }
 
@@ -374,8 +367,7 @@ void *handle_request(void* client){
 		send_date(clientfd);
 		close(clientfd);
 		return NULL;
-	}
-	
+	}	
 	/* read if-modify-scince */
 	while ((n = strcmp(buf, "\n")) != 0 ) {
 		i = 0;
@@ -565,9 +557,6 @@ void handle_get(int clientfd, const char *path, const char *modify){
 	home = (char *)malloc((size_t)BUFSIZ);
 	realpath(path, abs_path);
 	home = "/home";	
-#if defined(__APPLE__) && defined(__MACH__)
-	home = "/Users";
-#endif
 	/* can not get out of home */
 	if ((n = strncmp(abs_path, home, strlen(home))) != 0 ) {
 		send(clientfd, NOT_FOUND, strlen(NOT_FOUND), 0);
@@ -755,6 +744,7 @@ void send_content(int clientfd, const char *path){
 	send(clientfd, buf, strlen(buf) , 0);
 	magic_close(magic);
 }
+/* for /~user/... to replace all old user to new user */
 char *replace (const char *s, const char *oldW, const char *newW) { 
 	char *result; 
 	int i, cnt = 0; 
