@@ -45,7 +45,7 @@ int send_modify(int clientfd, const char *path);
 void send_content(int clientfd, const char *path);
 void handle_cgi(int clientfd, const char *path);
 void send_cgi_error(int clientfd);
-char *replace (const char *s, const char *oldW, const char *newW);
+char *replace (const char *url, const char *old_user, const char *new_user);
 void log_ip(int clientfd);
 void *accept_ipv6(void *);
 
@@ -88,6 +88,7 @@ int main(int argc, char *argv[]) {
 		exit(EXIT_SUCCESS);
 	}
 	if (d_flag == 0) {
+		/* mac dont support this function*/
 		if (daemon(1, 0) == -1) {
 			perror("daemon err\n");
 		}
@@ -300,6 +301,8 @@ void *handle_request(void* client){
 		perror("get path error\n");
 		exit(EXIT_FAILURE);
 	}
+	
+	/* url begin with /~ use replace to get new user */
 	if (query_string[1] == '~') {
 		char path_buf[BUFSIZ];
 		char new_user[BUFSIZ];
@@ -557,7 +560,7 @@ void handle_get(int clientfd, const char *path, const char *modify){
 	home = (char *)malloc((size_t)BUFSIZ);
 	realpath(path, abs_path);
 	home = "/home";	
-	/* can not get out of home */
+	/* can not get out of /home or /Users */
 	if ((n = strncmp(abs_path, home, strlen(home))) != 0 ) {
 		send(clientfd, NOT_FOUND, strlen(NOT_FOUND), 0);
 		if (log_fd > 0 && l_flag == 1)
@@ -602,13 +605,13 @@ void handle_get(int clientfd, const char *path, const char *modify){
 		send_content(clientfd, path);
 	}
 	if (S_ISDIR(st.st_mode)) { /* dir use alphasort to sort*/
-		/* index.html */
+		/* check index.html exist or not */
 		char temp[BUFSIZ];
 		strcpy(temp,path);
 		c = (int)strlen(temp) - 1;
 		temp[c] == '/' ? strcat(temp, "index.html") : strcat(temp, "/index.html");
 		if (stat(temp, &sp) == 0) {
-			sprintf(buf,"Content-Length: %d\r\n",(int)st.st_size);
+			sprintf(buf,"Content-Length: %d\r\n",(int)sp.st_size);
 			send(clientfd, buf, strlen(buf), 0);
 			if (log_fd > 0 && l_flag == 1)
 				write(log_fd,buf, strlen(buf));
@@ -745,27 +748,27 @@ void send_content(int clientfd, const char *path){
 	magic_close(magic);
 }
 /* for /~user/... to replace all old user to new user */
-char *replace (const char *s, const char *oldW, const char *newW) { 
+char *replace (const char *url, const char *old_user, const char *new_user) { 
 	char *result; 
 	int i, cnt = 0; 
-	int newWlen = strlen(newW); 
-	int oldWlen = strlen(oldW); 
-	for (i = 0; s[i] != '\0'; i++) { 
-		if (strstr(&s[i], oldW) == &s[i]) { 
+	int new_len = strlen(new_user); 
+	int old_len = strlen(old_user); 
+	for (i = 0; url[i] != '\0'; i++) { 
+		if (strstr(&url[i], old_user) == &url[i]) { 
 			cnt++; 
-			i += oldWlen - 1; 
+			i += old_len - 1; 
 		} 
 	}
-	result = (char *)malloc(i + cnt * (newWlen - oldWlen) + 1);
+	result = (char *)malloc(i + cnt * (new_len - old_len) + 1);
 	i = 0; 
-	while (*s) { 
-		if (strstr(s, oldW) == s) { 
-			strcpy(&result[i], newW); 
-			i += newWlen; 
-			s += oldWlen; 
+	while (*url) { 
+		if (strstr(url, old_user) == url) { 
+			strcpy(&result[i], new_user); 
+			i += new_len; 
+			url += old_len; 
 		} 
 		else
-			result[i++] = *s++; 
+			result[i++] = *url++; 
 	}   
 	result[i] = '\0'; 
 	return result; 
