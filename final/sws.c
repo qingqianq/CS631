@@ -108,12 +108,10 @@ int main(int argc, char *argv[]) {
 		}
 	}
 	if (i_flag == 1) {
-		if (is_valid_ipv4(ip)) {
+		if (is_valid_ipv4(ip)) 
 			listenedfd = build_ipv4_socket(&port, ip);
-		}
-		if (is_valid_ipv6(ip)) {
+		if (is_valid_ipv6(ip)) 
 			listenedfd = build_ipv6_socket(&port, ip);
-		}
 	}else {
 		listenedfd = build_ipv4_socket(&port, ip);
 		listenedfd_ipv6 = build_ipv6_socket(&port, ip);
@@ -416,16 +414,16 @@ void handle_cgi(int clientfd, const char *path){
 	char *p = NULL;
 	char *q = NULL;
 	struct stat st;
-	if ((q = strchr(buf, '?')) != NULL) {
+	if ((q = strchr(buf, '?')) != NULL) {	/*contains ? */
 		p = strtok(buf, "?");
 		realpath(cgi_path, abs_path);		/* cgi-path */
 		p = strtok(NULL, "?");
 		if (p)
 			strcpy(query_string,p);		
-		if ((q = strchr(query_string, '&')) != NULL) {
+		if ((q = strchr(query_string, '&')) != NULL) { /* the same to contain ? */
 			p = strtok(query_string, "&");
 			strcpy(env,p);
-			if(strchr(env,'='))
+			if(strchr(env,'=')) /* env cheking '=' */
 				putenv(env);
 			while ((p = strtok(NULL, "&")) != NULL) {
 				strcpy(env,p);
@@ -436,7 +434,7 @@ void handle_cgi(int clientfd, const char *path){
 			if(strchr(query_string, '='))
 				putenv(query_string);
 		}
-	}else 
+	}else /* not contains ? */
 		realpath(cgi_path, abs_path);
 	/* chage /cgi-bin/ with cgi_path*/
 	p = strstr(buf, "cgi-bin");
