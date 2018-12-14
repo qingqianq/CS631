@@ -4,6 +4,16 @@
 #include <ctype.h>
 #include <stdlib.h>
 // open irony company mode first;
+
+#define MAXTOKEN 100
+
+typedef struct mycmd{
+    char *cmd_token[MAXTOKEN];
+    int infd;
+    int outfd;
+    int tk_len;
+}mycmd;
+
 char current_dir[BUFSIZ];
 pid_t pid;
 int last_cmd = 0;
@@ -14,15 +24,21 @@ const char* query_parse(const char *query_string);
 char* trim_string(const char *line);
 char *replace (const char *src, const char *old, const char *new);
 char *add_space(const char *line);
+int handle_tokens(int tokens_num, char **tokens);
 int main(int argc, char*argv[]){
+    char buf[BUFSIZ];
     int x_flag = 0, c_flag = 0;
     const char * query_string = NULL;
     char *line = NULL;
     size_t size;
     int len = 0;
     char opt;
-    char *tokens[];
+    char *tokens[MAXTOKEN];
+    int tokens_num;
     signal(SIGINT, SIG_IGN);
+    memset(buf,'\0',BUFSIZ);
+    getcwd(buf, BUFSIZ);
+    setenv("SHELL", buf, 1);
     while((opt = getopt(argc, argv, "xc:")) != -1){
         switch(opt){
         case 'x' :
@@ -44,6 +60,7 @@ int main(int argc, char*argv[]){
     }else{
          while (1) {
             printf("sish$ ");
+            tokens_num = 0;
             len = getline(&line, &size, stdin); 
             line[len - 1] = '\0';
             line = trim_string(line);
@@ -58,7 +75,14 @@ int main(int argc, char*argv[]){
             line = replace(line, ">>", " >> ");
             line = add_space(line);
             printf("%s\n",line);
-            if(strtok(line, " \r") == NULL)
+            if ((tokens[0] = strtok(line, " \t")) == NULL) {
+                printf("need not handle");
+                continue;
+            }
+            tokens_num++;
+            while ((tokens[tokens_num] = strtok(NULL, " \t")) != NULL)
+                tokens_num++;
+            handle_tokens(tokens_num,tokens);
         }
     }
 }
@@ -71,10 +95,10 @@ int echo_cmd(const char *path){
 const char* query_parse(const char *query_string){
     return NULL;
 }
-char* add_space(char *line){
+/* use strtok to solve > and >> */
+char* add_space(const char *line){
     char *result;
     result = (char*)malloc((size_t)BUFSIZ);
-
     int i = 0, j = 0;
     while(i < BUFSIZ - 1 && line[i] != '\0' && j < BUFSIZ - 1){
         if (isspace(line[i]) !=0 || isspace(line[i + 1]) != 0 || line[i + 1] != '>') {
@@ -132,4 +156,34 @@ char *replace (const char *src, const char *old, const char *new) {
     }   
     result[i] = '\0'; 
     return result;
+}
+int handle_tokens(int tokens_num, char *tokens[]){
+    int pipe_num = 0;
+    for (int i = 0; i < tokens_num; i++) {
+        if (strcmp("|", tokens[i]) == 0) 
+            pipe_num++;
+    }
+    printf("pipe_num:%d\n",pipe_num);
+    if (pipe_num == 0) {
+        printf(" no pipe");
+    }else {
+        mycmd cmd[pipe_num + 1];
+        memset(cmd, 0, sizeof(cmd));
+        for (int i = 0, j = 0; i < pipe_num + 1; i++) {
+            cmd[i].infd = STDIN_FILENO;
+            cmd[i].outfd = STDOUT_FILENO;
+            int temp = 0;
+            for (; tokens[j] != NULL; j++) {
+                if(strcmp("|", tokens[j]) == 0){
+                    j++;
+                    break;
+                }
+                cmd[i].cmd_token[temp] = tokens[j];
+                printf("cmd[%d].cmd_tok[%d]:%s\n",i,temp,cmd[i].cmd_token[temp]);
+                temp++;
+                cmd[i].tk_len++;
+            }
+        }
+    }
+    return 0;
 }
