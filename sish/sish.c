@@ -10,7 +10,6 @@
 // open irony company mode first;
 
 #define MAXTOKEN 100
-
 #define REDIRECTION_APPEND 1
 
 typedef struct mycmd{
@@ -20,16 +19,15 @@ typedef struct mycmd{
     int tk_len;
 }mycmd;
 
-char current_dir[BUFSIZ];
 int last_cmd = 0;
 
-int cd_cmd(char *tokens[]);
-int echo_cmd(int tokens_num, char *tokens[]);
+int cd_cmd(char *tokens[],int x_flag);
+int echo_cmd(int tokens_num, char *tokens[], int x_flag);
 char *trim_string(const char *line);
 char *replace (const char *src, const char *old, const char *new);
 char *add_space(const char *line);
-int pipe_exe(int tokens_num, char **tokens);
-int parse_tokens(int tokens_num, char *tokens[]);
+int pipe_exe(int tokens_num, char **tokens,int x_flag);
+int parse_tokens(int tokens_num, char *tokens[], int flag);
 void red_exe(char *cmd[], char *input, char *output, int flag, int background);
 void sim_exe(char *cmd[], int background);
 int main(int argc, char*argv[]){
@@ -41,7 +39,7 @@ int main(int argc, char*argv[]){
     int len = 0;
     char opt;
     char *tokens[MAXTOKEN];
-    int tokens_num;
+    int tokens_num = 0;
     signal(SIGINT, SIG_IGN);
     memset(buf,'\0',BUFSIZ);
     getcwd(buf, BUFSIZ);
@@ -57,11 +55,42 @@ int main(int argc, char*argv[]){
             break;
         case '?':
             perror("getopt error");
+            exit(EXIT_FAILURE);
         }
     }
-    if(x_flag){
-        
-    }else if(c_flag){
+//    if(x_flag){
+//        while (1) {
+//            printf("sish$ ");
+//            tokens_num = 0;
+//            len = getline(&line, &size, stdin); 
+//            line[len - 1] = '\0';
+//            line = trim_string(line);
+//            if(strlen(line) == 0)
+//                continue;
+//            if (strcmp(line, "exit") == 0){
+//                printf("+ exit\n");
+//                if (last_cmd)
+//                    exit(127);
+//                exit(EXIT_SUCCESS);
+//            }                
+//            /* to use strtok add space before and after characters*/
+//            line = replace(line, "<", " < ");
+//            line = replace(line, "&", " & ");
+//            line = replace(line, "|", " | ");
+//            line = replace(line, ">>", " >> ");
+//            line = add_space(line);
+//            line = trim_string(line);
+//            if ((tokens[0] = strtok(line, " \t")) == NULL) {
+//                printf("sish: No tokens\n");
+//                continue;
+//            }
+//            tokens_num++;
+//            while ((tokens[tokens_num] = strtok(NULL, " \t")) != NULL)
+//                tokens_num++;
+//            parse_tokens(tokens_num,tokens,x_flag);
+//        }
+//    }else 
+    if(c_flag){
         query_string = replace(query_string, "<", " < ");
         query_string = replace(query_string, "&", " & ");
         query_string = replace(query_string, "|", " | ");
@@ -75,7 +104,7 @@ int main(int argc, char*argv[]){
         tokens_num++;
         while ((tokens[tokens_num] = strtok(NULL, " \t")) != NULL)
             tokens_num++;
-        parse_tokens(tokens_num,tokens);
+        parse_tokens(tokens_num,tokens,x_flag);
     }else{
          while (1) {
             printf("sish$ ");
@@ -86,6 +115,8 @@ int main(int argc, char*argv[]){
             if(strlen(line) == 0)
                 continue;
             if (strcmp(line, "exit") == 0){
+                if (x_flag)
+                    printf("+ exit\n");
                 if (last_cmd)
                     exit(127);
                 exit(EXIT_SUCCESS);
@@ -104,16 +135,28 @@ int main(int argc, char*argv[]){
             tokens_num++;
             while ((tokens[tokens_num] = strtok(NULL, " \t")) != NULL)
                 tokens_num++;
-            parse_tokens(tokens_num,tokens);
+            parse_tokens(tokens_num,tokens,x_flag);
         }
     }
 }
-int cd_cmd(char *tokens[]){
+int cd_cmd(char *tokens[],int x_flag){
     if (tokens[1] == NULL){
         chdir(getenv("HOME"));
+        if (x_flag) {
+            printf("+ cd\n");
+        }  
         return 0;
     }
     if (chdir(tokens[1]) < 0) {
+        if (x_flag) {
+            int i = 0;
+            printf("+ ");
+            while (tokens[i] != NULL){
+                printf("%s ",tokens[i]);
+                i++;
+            }
+            printf("\n");
+        }  
         printf("cd: %s: No such file or directory\n",tokens[1]);
         last_cmd = 1;
         return -1;
@@ -121,10 +164,16 @@ int cd_cmd(char *tokens[]){
     return 0;
 }
 /* $? is zero to success 1 to fail */
-int echo_cmd(int tokens_num,char *tokens[]){ 
+int echo_cmd(int tokens_num, char *tokens[], int x_flag){ 
     int i = 0;
     int fd;
     int std_out = dup(STDOUT_FILENO);
+    if (x_flag) {
+        printf("+ ");
+        for (int j = 0; j < tokens_num; j++)
+            printf("%s ",tokens[j]);
+        printf("\n");
+    }
     while (tokens[i] != NULL) {
         if (strcmp(">", tokens[i]) == 0){
             if (tokens[i + 1] == NULL) {
@@ -152,7 +201,7 @@ int echo_cmd(int tokens_num,char *tokens[]){
                 last_cmd = 1;
                 return -1;
             }
-            dup2(fd, STDOUT_FILENO);
+            dup2(fd, STDOUT_FILENO);            
             close(fd);
             break;
         }
@@ -169,6 +218,7 @@ int echo_cmd(int tokens_num,char *tokens[]){
     printf("\n");
     last_cmd = 0;
     dup2(std_out, STDOUT_FILENO);
+
     return 0;
 }
 /* use strtok to solve > and >> */
@@ -233,7 +283,7 @@ char *replace (const char *src, const char *old, const char *new) {
     result[i] = '\0'; 
     return result;
 }
-int pipe_exe(int tokens_num, char *tokens[]){
+int pipe_exe(int tokens_num, char *tokens[], int x_flag){
     int pipe_num = 0;
     int temp;
     for (int i = 0; i < tokens_num; i++) {
@@ -260,7 +310,7 @@ int pipe_exe(int tokens_num, char *tokens[]){
     return 0;
 }
 
-int parse_tokens(int tokens_num,char *tokens[]){
+int parse_tokens(int tokens_num,char *tokens[], int x_flag){
     int i = 0;
     int temp;
     int background = 0;
@@ -268,29 +318,38 @@ int parse_tokens(int tokens_num,char *tokens[]){
     memset(buf,0,sizeof(buf));
 
     if(strcmp("cd", tokens[0]) == 0){
-        cd_cmd(tokens);
+        cd_cmd(tokens,x_flag);
         return 0;
     }
     if (strcmp("echo", tokens[0]) == 0){
-        echo_cmd(tokens_num,tokens);
+        echo_cmd(tokens_num, tokens, x_flag);
         return 0;
     }
 /* handle commands not build in */  
     if (strcmp("&", tokens[tokens_num - 1]) == 0)
         background = 1;
     while (tokens[i] != NULL) {    // read the tokens before redirection
-        if((strcmp(">", tokens[i]) == 0) || (strcmp(">>", tokens[i]) == 0) ||
-        (strcmp("&", tokens[i]) == 0) || (strcmp("<", tokens[i]) == 0)){
+        if((strcmp(">", tokens[i]) == 0) || (strcmp(">>", tokens[i]) == 0) || 
+        (strcmp("&", tokens[i]) == 0) || (strcmp("<", tokens[i]) == 0) || (strcmp("|", tokens[i])) ==0){
             break;
         }
         buf[i] = tokens[i];
         i++;
+    }
+    if (x_flag) {
+        int i = 0;
+        printf("+ ");
+        while (buf[i] != NULL){
+            printf("%s ",buf[i]);
+            i++;
+        }
+        printf("\n");
     }  
     while (tokens[i] != NULL) {
         if(strcmp("&", tokens[i]) == 0)
             background = 1;
         if (strcmp("|", tokens[i]) == 0) {
-            pipe_exe(tokens_num, tokens);
+            pipe_exe(tokens_num, tokens, x_flag);
             return 0;
         }
         if(strcmp("<", tokens[i]) == 0) {
@@ -356,9 +415,8 @@ void red_exe(char *cmd[], char *input, char *output, int append, int background)
         return;
     }
     if (pid == 0) {
-        if (background == 0) {
+//        if (background == 0)
             signal(SIGINT, SIG_DFL);
-        }
         if (input) {
             if((fd = open(input, O_RDONLY)) == -1){
                 printf("sish: %s: No such file or directory\n",input);
@@ -410,9 +468,8 @@ void sim_exe(char *cmd[], int background){
         printf("simple cmd fork error\n");
     }
     if (pid == 0) {
-        if (background == 0) {
+//        if (background == 0)
             signal(SIGINT, SIG_DFL);
-        }
         if (execvp(cmd[0], cmd) == -1) {
             printf("%s: command not found\n",cmd[0]);
             kill(getpid(), SIGTERM);
