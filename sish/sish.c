@@ -30,7 +30,7 @@ char *replace (const char *src, const char *old, const char *new);
 char *add_space(const char *line);
 int pipe_exe(int tokens_num, char **tokens);
 int parse_tokens(int tokens_num, char *tokens[]);
-void red_exe(char *cmd[], char *input, char *output, int flag);
+void red_exe(char *cmd[], char *input, char *output, int flag, int background);
 void sim_exe(char *cmd[], int background);
 int main(int argc, char*argv[]){
     char buf[BUFSIZ];
@@ -70,7 +70,7 @@ int main(int argc, char*argv[]){
         query_string = trim_string(query_string);
         if ((tokens[0] = strtok(query_string, " \t\n")) == NULL) {
             printf("sish [ −x] [ −c command]\n");
-            exit(EXIT_SUCCESS);
+            exit(EXIT_FAILURE);
         }
         tokens_num++;
         while ((tokens[tokens_num] = strtok(NULL, " \t")) != NULL)
@@ -276,6 +276,8 @@ int parse_tokens(int tokens_num,char *tokens[]){
         return 0;
     }
 /* handle commands not build in */  
+    if (strcmp("&", tokens[tokens_num - 1]) == 0)
+        background = 1;
     while (tokens[i] != NULL) {    // read the tokens before redirection
         if((strcmp(">", tokens[i]) == 0) || (strcmp(">>", tokens[i]) == 0) ||
         (strcmp("&", tokens[i]) == 0) || (strcmp("<", tokens[i]) == 0)){
@@ -284,7 +286,7 @@ int parse_tokens(int tokens_num,char *tokens[]){
         buf[i] = tokens[i];
         i++;
     }  
-    while (tokens[i] != NULL && background == 0) {
+    while (tokens[i] != NULL) {
         if(strcmp("&", tokens[i]) == 0)
             background = 1;
         if (strcmp("|", tokens[i]) == 0) {
@@ -305,7 +307,7 @@ int parse_tokens(int tokens_num,char *tokens[]){
                     last_cmd = 1;
                     return -1;
                 }
-                red_exe(buf, tokens[temp], tokens[temp + 2], 0);
+                red_exe(buf, tokens[temp], tokens[temp + 2], 0, background);
                 return  0;
             }else if ((tokens[temp + 1] != NULL) && (strcmp(">>", tokens[temp + 1])) == 0){
                 if (tokens[temp + 2] == NULL) {
@@ -313,10 +315,10 @@ int parse_tokens(int tokens_num,char *tokens[]){
                     last_cmd = 1;
                     return -1;
                 }
-                red_exe(buf, tokens[temp], tokens[temp + 2], REDIRECTION_APPEND);
+                red_exe(buf, tokens[temp], tokens[temp + 2], REDIRECTION_APPEND, background);
                 return 0;
             }else{
-                red_exe(buf, tokens[temp], NULL, 0);
+                red_exe(buf, tokens[temp], NULL, 0, background);
                 return  0;
             }               
         }
@@ -327,7 +329,7 @@ int parse_tokens(int tokens_num,char *tokens[]){
                 last_cmd = 1;
                 return -1;
             }
-            red_exe(buf, NULL, tokens[temp], 0);
+            red_exe(buf, NULL, tokens[temp], 0, background);
             return 0;
         }
         if (strcmp(">>", tokens[i]) == 0) {
@@ -337,7 +339,7 @@ int parse_tokens(int tokens_num,char *tokens[]){
                 last_cmd = 1;
                 return -1;
             }
-            red_exe(buf, NULL, tokens[temp], REDIRECTION_APPEND);
+            red_exe(buf, NULL, tokens[temp], REDIRECTION_APPEND, background);
             return  0;
         }
         i++;
@@ -345,7 +347,7 @@ int parse_tokens(int tokens_num,char *tokens[]){
     sim_exe(buf,background);
     return 0;
 }
-void red_exe(char *cmd[], char *input, char *output, int append){
+void red_exe(char *cmd[], char *input, char *output, int append, int background){
     int fd,status;
     pid_t pid;
     if ((pid = fork()) == -1) {
@@ -354,7 +356,9 @@ void red_exe(char *cmd[], char *input, char *output, int append){
         return;
     }
     if (pid == 0) {
-        signal(SIGINT, SIG_DFL);
+        if (background == 0) {
+            signal(SIGINT, SIG_DFL);
+        }
         if (input) {
             if((fd = open(input, O_RDONLY)) == -1){
                 printf("sish: %s: No such file or directory\n",input);
@@ -387,9 +391,15 @@ void red_exe(char *cmd[], char *input, char *output, int append){
             kill(getpid(), SIGTERM);
         }
     }else {
-        waitpid(pid, &status, 0);
-        if (status) 
-            last_cmd = 1;
+        if (background == 0) {
+            waitpid(pid, &status, 0);
+            if (status) 
+                last_cmd = 1;
+        }else {
+            signal(SIGCHLD, SIG_IGN);
+            printf("Pid: %d\n",pid);
+        }
+        
     }
 }
 /* simple cmd without redirection */
@@ -400,7 +410,9 @@ void sim_exe(char *cmd[], int background){
         printf("simple cmd fork error\n");
     }
     if (pid == 0) {
-        signal(SIGINT, SIG_DFL);
+        if (background == 0) {
+            signal(SIGINT, SIG_DFL);
+        }
         if (execvp(cmd[0], cmd) == -1) {
             printf("%s: command not found\n",cmd[0]);
             kill(getpid(), SIGTERM);
