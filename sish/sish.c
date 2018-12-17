@@ -12,17 +12,6 @@
 
 int last_cmd = 0;
 int main(int argc, char*argv[]){
-    int std_in, std_out;
-    if ((std_in = dup(STDIN_FILENO)) == -1) {
-        fprintf(stderr, "dup err,%d\n",errno);
-        close(std_in);
-        exit(EXIT_STATUS);
-    }
-    if ((std_out = dup(STDOUT_FILENO)) == -1) {
-        fprintf(stderr, "dup err,%d\n",errno);
-        close(std_out);
-        exit(EXIT_STATUS);
-    }
     char buf[BUFSIZ];
     last_cmd = 0;
     int x_flag = 0, c_flag = 0;
@@ -76,8 +65,6 @@ int main(int argc, char*argv[]){
     }else{
         while (1) {
             printf("sish$ ");
-            dup2(std_in, STDIN_FILENO);
-            dup2(std_out, STDOUT_FILENO);
             tokens_num = 0;
             line = NULL;
             if ((len = getline(&line, &size, stdin)) == -1){
