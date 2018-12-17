@@ -40,7 +40,7 @@ int main(int argc, char*argv[]){
             break;
         case '?':
             fprintf(stderr,"sish [ −x] [ −c command]\n");
-            exit(EXIT_FAILURE);
+            exit(EXIT_STATUS);
         }
     }
     if(c_flag){
@@ -50,13 +50,14 @@ int main(int argc, char*argv[]){
         query_string = replace(query_string, ">>", " >> ");
         query_string = add_space(query_string);
         query_string = trim_string(query_string);
+        printf("%s\n",query_string);
         if(query_string == NULL){
             fprintf(stderr, "parse err\n");
-            exit(EXIT_FAILURE);
+            exit(EXIT_STATUS);
         }
         if ((tokens[0] = strtok(query_string, " \t\n")) == NULL) {
             fprintf(stderr,"sish [ −x] [ −c command]\n");
-            exit(EXIT_FAILURE);
+            exit(EXIT_STATUS);
         }
         tokens_num++;
         while ((tokens[tokens_num] = strtok(NULL, " \t\n")) != NULL)
@@ -252,18 +253,27 @@ char* add_space(const char *line){
     result = (char*)malloc((size_t)BUFSIZ);
     int i = 0, j = 0;
     while(i < BUFSIZ - 1 && line[i] != '\0' && j < BUFSIZ - 1){
-        if (isspace(line[i]) !=0 || isspace(line[i + 1]) != 0 || line[i + 1] != '>') {
+        if ((isspace(line[i]) !=0) || (isspace(line[i + 1]) != 0)) {
             result[j++] = line[i++];
             continue;
         }
         if(line[i] == '>'){
-            result[j++] = line[i++];
-            result[j++] = line[i++];
+            if (line[i + 1] == '>') {
+                result[j++] = line[i++];
+                result[j++] = line[i++];
+            }else {
+                result[j++] = line[i++];
+                result[j] = ' ';
+                j++;
+            }            
             continue;
         }
-        result[j++] = line[i++];
-        result[j] = ' ';
-        j++;
+        if (line[i + 1] == '>') {
+            result[j++] = line[i++];
+            result[j] = ' ';
+            j++;
+        }else
+            result[j++] = line[i++];
     }
     result[BUFSIZ - 1] = '\0';
     return result;
@@ -296,8 +306,6 @@ void pipe_exe(int tokens_num, char *tokens[], int x_flag){
     int fd_out[2];
     int fd_in[2];
     pid_t pid;
-    int std_out;
-    std_out = dup(STDOUT_FILENO);
     for (int i = 0; i < tokens_num; i++) {
         if (strcmp("|", tokens[i]) == 0){
             if ((i - 1 == -1) || (tokens[i - 1] == NULL)) {
@@ -360,10 +368,10 @@ void pipe_exe(int tokens_num, char *tokens[], int x_flag){
                 }
             }
             waitpid(pid, &status, 0);
-            if ( i == pipe_num ) {
-                if (status)
-                    last_cmd = 127;
-            }
+            if(WIFEXITED(status))
+                last_cmd = WEXITSTATUS(status);
+            else if (WIFSIGNALED(status))
+                last_cmd = 127;
         }else if (pid == 0){
             signal(SIGINT, SIG_DFL);
             if(i == 0){
@@ -567,11 +575,14 @@ void red_exe(char *cmd[], char *input, char *output, int append, int background)
     }else {
         if (background == 0) {
             waitpid(pid, &status, 0);
-            if (status)
-                last_cmd = 127;
+            if(WIFEXITED(status))
+                last_cmd = WEXITSTATUS(status);
+            else if (WIFSIGNALED(status))
+                last_cmd = EXIT_STATUS;
         }else {
             signal(SIGCHLD, SIG_IGN);
             printf("Pid: %d\n",pid);
+            waitpid(pid, NULL, WNOHANG);
         }
     }
 }
@@ -592,12 +603,16 @@ void sim_exe(char *cmd[], int background){
         }
     }else {
         if (background == 0) {
-            waitpid(pid,&status,0);
-            if (status)
-                last_cmd = 127;
+            waitpid(pid, &status, 0);
+            if(WIFEXITED(status))
+                last_cmd = WEXITSTATUS(status);
+            else if (WIFSIGNALED(status))
+                last_cmd = EXIT_STATUS;
         }else {
             signal(SIGCHLD, SIG_IGN);
             printf("Pid: %d\n",pid);
+            waitpid(pid, NULL, WNOHANG);
+            
         }
     }
 }
