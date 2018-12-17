@@ -8,31 +8,12 @@
 #include <signal.h>
 #include <fcntl.h>
 #include <errno.h>
-
-#define MAXTOKEN 100
-#define DFTPERMISSION 0644
-#define REDIRECTION_APPEND 1
-
-typedef struct mycmd{
-    char *cmd_token[MAXTOKEN];
-    int tk_len;
-}mycmd;
+#include "sish.h"
 
 int last_cmd = 0;
-
-int cd_cmd(char *tokens[],int x_flag);
-int echo_cmd(int tokens_num, char *tokens[], int x_flag);
-void exit_cmd(char *tokens[], int x_flag);
-char *trim_string(const char *line);
-char *replace (const char *src, const char *old, const char *new);
-char *add_space(const char *line);
-void pipe_exe(int tokens_num, char **tokens,int x_flag);
-int parse_tokens(int tokens_num, char *tokens[], int flag);
-void red_exe(char *cmd[], char *input, char *output, int flag, int background);
-void sim_exe(char *cmd[], int background);
-
 int main(int argc, char*argv[]){
     char buf[BUFSIZ];
+    last_cmd = 0;
     int x_flag = 0, c_flag = 0;
     char *query_string = NULL;
     char *line = NULL;
@@ -359,9 +340,8 @@ void pipe_exe(int tokens_num, char *tokens[], int x_flag){
             pipe(fd_in);
         if((pid = fork()) == -1){
             last_cmd = 1;
-            if(i != pipe_num){
+            if(i != pipe_num)
                 (i % 2 == 0) ? close(fd_out[1]) : close(fd_in[1]);
-            }
             fprintf(stderr, "pipe fork error\n");
             return;
         }else if (pid > 0) {
@@ -436,7 +416,6 @@ void pipe_exe(int tokens_num, char *tokens[], int x_flag){
         }
     }
 }
-
 int parse_tokens(int tokens_num,char *tokens[], int x_flag){
     int i = 0,j = 0;
     int temp;
@@ -530,6 +509,7 @@ int parse_tokens(int tokens_num,char *tokens[], int x_flag){
     sim_exe(buf,background);
     return 0;
 }
+
 void red_exe(char *cmd[], char *input, char *output, int append, int background){
     int fd,status;
     pid_t pid;
@@ -595,7 +575,6 @@ void red_exe(char *cmd[], char *input, char *output, int append, int background)
         }
     }
 }
-/* simple cmd without redirection */
 void sim_exe(char *cmd[], int background){
     pid_t pid;
     int status;
