@@ -12,6 +12,17 @@
 
 int last_cmd = 0;
 int main(int argc, char*argv[]){
+    int std_in, std_out;
+    if ((std_in = dup(STDIN_FILENO)) == -1) {
+        fprintf(stderr, "dup err,%d\n",errno);
+        close(std_in);
+        exit(EXIT_STATUS);
+    }
+    if ((std_out = dup(STDOUT_FILENO)) == -1) {
+        fprintf(stderr, "dup err,%d\n",errno);
+        close(std_out);
+        exit(EXIT_STATUS);
+    }
     char buf[BUFSIZ];
     last_cmd = 0;
     int x_flag = 0, c_flag = 0;
@@ -50,7 +61,6 @@ int main(int argc, char*argv[]){
         query_string = replace(query_string, ">>", " >> ");
         query_string = add_space(query_string);
         query_string = trim_string(query_string);
-        printf("%s\n",query_string);
         if(query_string == NULL){
             fprintf(stderr, "parse err\n");
             exit(EXIT_STATUS);
@@ -62,11 +72,12 @@ int main(int argc, char*argv[]){
         tokens_num++;
         while ((tokens[tokens_num] = strtok(NULL, " \t\n")) != NULL)
             tokens_num++;
-        if(parse_tokens(tokens_num,tokens,x_flag) < 0)
-            fprintf(stderr, "parse_token err\n");
+        parse_tokens(tokens_num,tokens,x_flag);
     }else{
         while (1) {
             printf("sish$ ");
+            dup2(std_in, STDIN_FILENO);
+            dup2(std_out, STDOUT_FILENO);
             tokens_num = 0;
             line = NULL;
             if ((len = getline(&line, &size, stdin)) == -1){
@@ -129,16 +140,16 @@ int cd_cmd(char *tokens[],int x_flag){
             fprintf(stderr,"+ cd\n");
         return 0;
     }
-    if (chdir(tokens[1]) < 0) {
-        if (x_flag) {
-            int i = 0;
-            fprintf(stderr,"+ ");
-            while (tokens[i] != NULL){
-                fprintf(stderr,"%s ",tokens[i]);
-                i++;
-            }
-            fprintf(stderr,"\n");
+    if (x_flag) {
+        int i = 0;
+        fprintf(stderr,"+ ");
+        while (tokens[i] != NULL){
+            fprintf(stderr,"%s ",tokens[i]);
+            i++;
         }
+        fprintf(stderr,"\n");
+    }
+    if (chdir(tokens[1]) < 0) {
         fprintf(stderr,"cd: %s: No such file or directory\n",tokens[1]);
         last_cmd = 1;
         return -1;
@@ -353,7 +364,6 @@ void pipe_exe(int tokens_num, char *tokens[], int x_flag){
             fprintf(stderr, "pipe fork error\n");
             return;
         }else if (pid > 0) {
-            signal(SIGCHLD, SIG_IGN);
             if (i == 0)
                 close(fd_out[1]);
             else if(i == pipe_num)
@@ -580,7 +590,6 @@ void red_exe(char *cmd[], char *input, char *output, int append, int background)
             else if (WIFSIGNALED(status))
                 last_cmd = EXIT_STATUS;
         }else {
-            signal(SIGCHLD, SIG_IGN);
             printf("Pid: %d\n",pid);
             waitpid(pid, NULL, WNOHANG);
         }
@@ -609,10 +618,8 @@ void sim_exe(char *cmd[], int background){
             else if (WIFSIGNALED(status))
                 last_cmd = EXIT_STATUS;
         }else {
-            signal(SIGCHLD, SIG_IGN);
             printf("Pid: %d\n",pid);
-            waitpid(pid, NULL, WNOHANG);
-            
+            waitpid(pid, NULL, WNOHANG);            
         }
     }
 }
