@@ -10,12 +10,11 @@
 #include <errno.h>
 
 #define MAXTOKEN 100
+#define DFTPERMISSION 0644
 #define REDIRECTION_APPEND 1
 
 typedef struct mycmd{
     char *cmd_token[MAXTOKEN];
-    int infd;
-    int outfd;
     int tk_len;
 }mycmd;
 
@@ -27,7 +26,7 @@ void exit_cmd(char *tokens[], int x_flag);
 char *trim_string(const char *line);
 char *replace (const char *src, const char *old, const char *new);
 char *add_space(const char *line);
-int pipe_exe(int tokens_num, char **tokens,int x_flag);
+void pipe_exe(int tokens_num, char **tokens,int x_flag);
 int parse_tokens(int tokens_num, char *tokens[], int flag);
 void red_exe(char *cmd[], char *input, char *output, int flag, int background);
 void sim_exe(char *cmd[], int background);
@@ -37,6 +36,7 @@ int main(int argc, char*argv[]){
     int x_flag = 0, c_flag = 0;
     char *query_string = NULL;
     char *line = NULL;
+    line = (char *)malloc((size_t)BUFSIZ);
     size_t size;
     int len = 0;
     char opt;
@@ -69,6 +69,10 @@ int main(int argc, char*argv[]){
         query_string = replace(query_string, ">>", " >> ");
         query_string = add_space(query_string);
         query_string = trim_string(query_string);
+        if(query_string == NULL){
+            fprintf(stderr, "parse err\n");
+            exit(EXIT_FAILURE);
+        }
         if ((tokens[0] = strtok(query_string, " \t\n")) == NULL) {
             fprintf(stderr,"sish [ −x] [ −c command]\n");
             exit(EXIT_FAILURE);
@@ -82,7 +86,11 @@ int main(int argc, char*argv[]){
         while (1) {
             printf("sish$ ");
             tokens_num = 0;
-            len = getline(&line, &size, stdin); 
+            line = NULL;
+            if ((len = getline(&line, &size, stdin)) == -1){
+                fprintf(stderr, "getline err\n");
+                continue;
+            }
             line[len - 1] = '\0';
             line = trim_string(line);
             if(strlen(line) == 0)
@@ -94,13 +102,17 @@ int main(int argc, char*argv[]){
                     exit(127);
                 exit(EXIT_SUCCESS);
             }
-            /* to use strtok add space before and after characters*/
             line = replace(line, "<", " < ");
             line = replace(line, "&", " & ");
             line = replace(line, "|", " | ");
             line = replace(line, ">>", " >> ");
             line = add_space(line);
             line = trim_string(line);
+            if (line == NULL) {
+                last_cmd = 1;
+                fprintf(stderr, "read error");
+                continue;
+            }
             if ((tokens[0] = strtok(line, " \t")) == NULL) {
                 fprintf(stderr,"sish: No tokens\n");
                 continue;
@@ -108,8 +120,7 @@ int main(int argc, char*argv[]){
             tokens_num++;
             while ((tokens[tokens_num] = strtok(NULL, " \t")) != NULL)
                 tokens_num++;
-            if(parse_tokens(tokens_num,tokens,x_flag) < 0)
-                fprintf(stderr, "parse err\n");
+            parse_tokens(tokens_num,tokens,x_flag);
         }
     }
 }
@@ -132,9 +143,8 @@ int cd_cmd(char *tokens[],int x_flag){
             fprintf(stderr, "getenv error,errno: %d\n",errno);
             return  -1;
         }
-        if (x_flag) {
+        if (x_flag)
             fprintf(stderr,"+ cd\n");
-        }
         return 0;
     }
     if (chdir(tokens[1]) < 0) {
@@ -153,11 +163,16 @@ int cd_cmd(char *tokens[],int x_flag){
     }
     return 0;
 }
-/* $? is zero to success 1 to fail */
 int echo_cmd(int tokens_num, char *tokens[], int x_flag){ 
     int i = 0;
     int fd;
-    int std_out = dup(STDOUT_FILENO);
+    int std_out;
+    if((std_out = dup(STDOUT_FILENO)) == -1){
+        last_cmd = 1;
+        close(std_out);
+        fprintf(stderr, "dup err,errno: %d\n",errno);
+        return  -1;
+    }
     if (x_flag) {
         fprintf(stderr,"+ ");
         for (int j = 0; j < tokens_num; j++)
@@ -167,31 +182,41 @@ int echo_cmd(int tokens_num, char *tokens[], int x_flag){
     while (tokens[i] != NULL) {
         if (strcmp(">", tokens[i]) == 0){
             if (tokens[i + 1] == NULL) {
-                fprintf(stderr,"Expect output argv after >\n");
+                fprintf(stderr,"syntax error near unexpected token `newline'\n");
                 last_cmd = 1;
                 return -1;
             }
-            if((fd = open(tokens[i + 1], O_CREAT | O_TRUNC | O_WRONLY, 0600)) == -1){
+            if((fd = open(tokens[i + 1], O_CREAT | O_TRUNC | O_WRONLY)) == -1){
                 fprintf(stderr,"sish: %s: Create file error\n",tokens[i + 1]);
                 last_cmd = 1;
                 return -1;
             }
-            dup2(fd, STDOUT_FILENO);
+            if (dup2(fd, STDOUT_FILENO) == -1){
+                last_cmd = 1;
+                close(fd);
+                fprintf(stderr, "dup2 err,errno: %d\n",errno);
+                return  -1;
+            }
             close(fd);
             break;
         }
         if (strcmp(">>", tokens[i]) == 0){
             if (tokens[i + 1] == NULL) {
-                fprintf(stderr,"Expect output argv after >>\n");
+                fprintf(stderr,"syntax error near unexpected token `newline'\n");
                 last_cmd = 1;
                 return -1;
             }
-            if((fd = open(tokens[i + 1], O_CREAT | O_APPEND | O_WRONLY, 0600)) == -1){
+            if((fd = open(tokens[i + 1], O_CREAT | O_APPEND | O_WRONLY, DFTPERMISSION)) == -1){
                 fprintf(stderr,"sish: %s: Create file error\n",tokens[i + 1]);
                 last_cmd = 1;
                 return -1;
             }
-            dup2(fd, STDOUT_FILENO);
+            if(dup2(fd, STDOUT_FILENO) == -1){
+                last_cmd = 1;
+                close(fd);
+                fprintf(stderr, "dup2 err,errno: %d\n",errno);
+                return  -1;
+            }
             close(fd);
             break;
         }
@@ -207,8 +232,38 @@ int echo_cmd(int tokens_num, char *tokens[], int x_flag){
     }
     printf("\n");
     last_cmd = 0;
-    dup2(std_out, STDOUT_FILENO);
+    if(dup2(std_out, STDOUT_FILENO) == -1){
+        last_cmd = 1;
+        close(std_out);
+        fprintf(stderr, "dup2 err,errno: %d\n",errno);
+        return  -1;
+    }
     return 0;
+}
+char *replace (const char *src, const char *old, const char *new) {
+    char *result = NULL;
+    int i, cnt = 0;
+    int new_len = strlen(new);
+    int old_len = strlen(old);
+    for (i = 0; src[i] != '\0'; i++) {
+        if (strstr(&src[i], old) == &src[i]) {
+            cnt++;
+            i += old_len - 1;
+        }
+    }
+    result = (char *)malloc(i + cnt * (new_len - old_len) + 1);
+    i = 0;
+    while (*src) {
+        if (strstr(src, old) == src) {
+            strcpy(&result[i], new);
+            i += new_len;
+            src += old_len;
+        }
+        else
+            result[i++] = *src++;
+    }
+    result[i] = '\0';
+    return result;
 }
 /* use strtok to solve > and >> */
 char* add_space(const char *line){
@@ -247,43 +302,39 @@ char* trim_string(const char *line){
     end[1] = '\0';
     return result;
 }
-char *replace (const char *src, const char *old, const char *new) {
-    char *result;
-    int i, cnt = 0;
-    int new_len = strlen(new);
-    int old_len = strlen(old);
-    for (i = 0; src[i] != '\0'; i++) {
-        if (strstr(&src[i], old) == &src[i]) {
-            cnt++;
-            i += old_len - 1;
-        }
-    }
-    result = (char *)malloc(i + cnt * (new_len - old_len) + 1);
-    i = 0;
-    while (*src) {
-        if (strstr(src, old) == src) {
-            strcpy(&result[i], new);
-            i += new_len;
-            src += old_len;
-        }
-        else
-            result[i++] = *src++;
-    }
-    result[i] = '\0';
-    return result;
-}
-int pipe_exe(int tokens_num, char *tokens[], int x_flag){
+
+/*
+    out  in  out  in  out  in   out     in   out
+    cmd0     cmd1     cmd2     cmd3    ...  ...   cmdn
+    p_out    p_in     p_out    p_in  ...
+    n % 2 == 0 -> p_in to in p_out to out
+*/
+void pipe_exe(int tokens_num, char *tokens[], int x_flag){
     int pipe_num = 0;
-    int temp;
+    int temp, status;
+    int fd_out[2];
+    int fd_in[2];
+    pid_t pid;
+    int std_out;
+    std_out = dup(STDOUT_FILENO);
     for (int i = 0; i < tokens_num; i++) {
-        if (strcmp("|", tokens[i]) == 0)
+        if (strcmp("|", tokens[i]) == 0){
+            if ((i - 1 == -1) || (tokens[i - 1] == NULL)) {
+                fprintf(stderr, "syntax error near unexpected token `|'\n");
+                last_cmd = 1;
+                return;
+            }
+            if (tokens[i + 1] == NULL) {
+                fprintf(stderr, "syntax error near unexpected token `|'\n");
+                last_cmd = 1;
+                return;
+            }
             pipe_num++;
+        }
     }
     mycmd cmd[pipe_num + 1];
     memset(cmd, 0, sizeof(cmd));
     for (int i = 0, j = 0; i < pipe_num + 1; i++) {
-        cmd[i].infd = STDIN_FILENO;
-        cmd[i].outfd = STDOUT_FILENO;
         temp = 0;
         if (x_flag)
             fprintf(stderr, "+ ");
@@ -301,7 +352,89 @@ int pipe_exe(int tokens_num, char *tokens[], int x_flag){
         if (x_flag)
             fprintf(stderr, "\n");
     }
-    return 0;
+    for (int i = 0; i < pipe_num + 1; i++) {
+        if(i % 2 == 0)
+            pipe(fd_out);
+        else
+            pipe(fd_in);
+        if((pid = fork()) == -1){
+            last_cmd = 1;
+            if(i != pipe_num){
+                (i % 2 == 0) ? close(fd_out[1]) : close(fd_in[1]);
+            }
+            fprintf(stderr, "pipe fork error\n");
+            return;
+        }else if (pid > 0) {
+            signal(SIGCHLD, SIG_IGN);
+            if (i == 0)
+                close(fd_out[1]);
+            else if(i == pipe_num)
+                (i % 2 == 0) ? close(fd_out[0]) : close(fd_in[0]);
+            else {
+                if (i % 2 == 0) {
+                    close(fd_out[0]);
+                    close(fd_in[1]);
+                }else {
+                    close(fd_out[1]);
+                    close(fd_in[0]);
+                }
+            }
+            waitpid(pid, &status, 0);
+            if ( i == pipe_num ) {
+                if (status)
+                    last_cmd = 127;
+            }
+        }else if (pid == 0){
+            signal(SIGINT, SIG_DFL);
+            if(i == 0){
+                if (dup2(fd_out[1], STDOUT_FILENO) == -1) {
+                    close(fd_out[1]);
+                    fprintf(stderr, "pipe dup2 err\n");
+                    kill(getpid(),SIGTERM);
+                }
+            }else if (i == pipe_num) {
+                if ((pipe_num + 1) % 2 == 0) {
+                    if (dup2(fd_out[0], STDIN_FILENO) == -1){
+                        close(fd_out[0]);
+                        fprintf(stderr, "pipe dup2 err\n");
+                        kill(getpid(),SIGTERM);
+                    }
+                }else {
+                    if(dup2(fd_in[0], STDIN_FILENO) == -1){
+                        close(fd_in[0]);
+                        fprintf(stderr, "pipe dup2 err\n");
+                        kill(getpid(),SIGTERM);
+                    }
+                }
+            }else if (i % 2 == 0) {
+                if(dup2(fd_out[1], STDOUT_FILENO) == -1){
+                    close(fd_out[1]);
+                    fprintf(stderr, "pipe dup2 err\n");
+                    kill(getpid(),SIGTERM);
+                }
+                if(dup2(fd_in[0], STDIN_FILENO) == -1){
+                    close(fd_in[0]);
+                    fprintf(stderr, "pipe dup2 err\n");
+                    kill(getpid(),SIGTERM);
+                }
+            }else {
+                if(dup2(fd_out[0], STDIN_FILENO) == -1){
+                    close(fd_out[0]);
+                    fprintf(stderr, "pipe dup2 err\n");
+                    kill(getpid(),SIGTERM);
+                }
+                if(dup2(fd_in[1], STDOUT_FILENO) == -1){
+                    close(fd_in[1]);
+                    fprintf(stderr, "pipe dup2 err\n");
+                    kill(getpid(),SIGTERM);
+                }
+            }
+            if (execvp(cmd[i].cmd_token[0], cmd[i].cmd_token) == -1) {
+                fprintf(stderr,"%s: command not found\n",cmd[i].cmd_token[0]);
+                kill(getpid(), SIGTERM);
+            }
+        }
+    }
 }
 
 int parse_tokens(int tokens_num,char *tokens[], int x_flag){
@@ -317,7 +450,7 @@ int parse_tokens(int tokens_num,char *tokens[], int x_flag){
     if (strcmp("echo", tokens[0]) == 0)
         return echo_cmd(tokens_num, tokens, x_flag);
     while (tokens[j] != NULL) {
-        if (strcmp("|", tokens[j]) == 0) {
+        if (strcmp("|", tokens[j]) == 0){
             pipe_exe(tokens_num, tokens, x_flag);
             return 0;
         }
@@ -327,17 +460,16 @@ int parse_tokens(int tokens_num,char *tokens[], int x_flag){
         background = 1;
     while (tokens[i] != NULL) {
         if((strcmp(">", tokens[i]) == 0) || (strcmp(">>", tokens[i]) == 0) || 
-           (strcmp("&", tokens[i]) == 0) || (strcmp("<", tokens[i]) == 0) || (strcmp("|", tokens[i])) ==0){
+             (strcmp("&", tokens[i]) == 0) || (strcmp("<", tokens[i]) == 0))
             break;
-        }
         buf[i] = tokens[i];
         i++;
     }
     if (x_flag) {
         int i = 0;
         fprintf(stderr, "+ ");
-        while (buf[i] != NULL){
-            fprintf(stderr,"%s ",buf[i]);
+        while (tokens[i] != NULL){
+            fprintf(stderr,"%s ",tokens[i]);
             i++;
         }
         fprintf(stderr,"\n");
@@ -362,7 +494,7 @@ int parse_tokens(int tokens_num,char *tokens[], int x_flag){
                 return  0;
             }else if ((tokens[temp + 1] != NULL) && (strcmp(">>", tokens[temp + 1])) == 0){
                 if (tokens[temp + 2] == NULL) {
-                    fprintf(stderr,"Expect output argv after >>\n");
+                    fprintf(stderr,"syntax error near unexpected token `newline'\n");
                     last_cmd = 1;
                     return -1;
                 }
@@ -376,7 +508,7 @@ int parse_tokens(int tokens_num,char *tokens[], int x_flag){
         if (strcmp(">", tokens[i]) == 0) {
             temp = i + 1;
             if (tokens[temp] == NULL) {
-                fprintf(stderr,"Expect output argv after >\n");
+                fprintf(stderr,"syntax error near unexpected token `newline'\n");
                 last_cmd = 1;
                 return -1;
             }
@@ -386,7 +518,7 @@ int parse_tokens(int tokens_num,char *tokens[], int x_flag){
         if (strcmp(">>", tokens[i]) == 0) {
             temp = i + 1;
             if (tokens[temp] == NULL) {
-                fprintf(stderr,"Expect output argv after >>\n");
+                fprintf(stderr,"syntax error near unexpected token `newline'\n");
                 last_cmd = 1;
                 return -1;
             }
@@ -412,39 +544,51 @@ void red_exe(char *cmd[], char *input, char *output, int append, int background)
         if (input) {
             if((fd = open(input, O_RDONLY)) == -1){
                 fprintf(stderr,"sish: %s: No such file or directory\n",input);
-                last_cmd = 1;
-                return;
+                close(fd);
+                kill(getpid(), SIGTERM);
             }
-            dup2(fd, STDIN_FILENO);
+            if(dup2(fd, STDIN_FILENO) == -1){
+                fprintf(stderr, "dup2 err,errno: %d\n",errno);
+                close(fd);
+                kill(getpid(), SIGTERM);
+            }
             close(fd);
         }
         if (output) {
             if (append) {
-                if((fd = open(output, O_CREAT | O_TRUNC | O_WRONLY, 0600)) == -1){
+                if((fd = open(output, O_CREAT | O_TRUNC | O_WRONLY, DFTPERMISSION)) == -1){
                     fprintf(stderr,"sish: %s: Create file error\n",output);
-                    last_cmd = 1;
-                    return;
+                    close(fd);
+                    kill(getpid(), SIGTERM);
                 }
-                dup2(fd, STDOUT_FILENO);
+                if(dup2(fd, STDOUT_FILENO) == -1){
+                    fprintf(stderr, "dup2 err,errno: %d\n",errno);
+                    close(fd);
+                    kill(getpid(), SIGTERM);
+                }
                 close(fd);
             }
-            if((fd = open(output, O_CREAT | O_APPEND | O_WRONLY, 0600)) == -1){
+            if((fd = open(output, O_CREAT | O_APPEND | O_WRONLY, DFTPERMISSION)) == -1){
                 fprintf(stderr,"sish: %s: Create file error\n",output);
-                last_cmd = 1;
-                return;
+                close(fd);
+                kill(getpid(), SIGTERM);
             }
-            dup2(fd, STDOUT_FILENO);
+            if(dup2(fd, STDOUT_FILENO) == -1){
+                fprintf(stderr, "dup2 err,errno: %d\n",errno);
+                close(fd);
+                kill(getpid(), SIGTERM);
+            }
             close(fd);
         }
         if (execvp(cmd[0], cmd) == -1) {
-            fprintf(stderr,"%s: command not found\n",cmd[0]);
+            fprintf(stderr,"%s: Command not found\n",cmd[0]);
             kill(getpid(), SIGTERM);
         }
     }else {
         if (background == 0) {
             waitpid(pid, &status, 0);
             if (status)
-                last_cmd = 1;
+                last_cmd = 127;
         }else {
             signal(SIGCHLD, SIG_IGN);
             printf("Pid: %d\n",pid);
@@ -456,7 +600,9 @@ void sim_exe(char *cmd[], int background){
     pid_t pid;
     int status;
     if ((pid = fork()) < 0) {
+        last_cmd = 1;
         fprintf(stderr,"simple cmd fork error\n");
+        return;
     }
     if (pid == 0) {
         //        if (background == 0)
@@ -469,7 +615,7 @@ void sim_exe(char *cmd[], int background){
         if (background == 0) {
             waitpid(pid,&status,0);
             if (status)
-                last_cmd = 1;
+                last_cmd = 127;
         }else {
             signal(SIGCHLD, SIG_IGN);
             printf("Pid: %d\n",pid);
